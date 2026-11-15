@@ -1,0 +1,16 @@
+# Optional. Copy to config/users.yml - merged with the values from .env.
+# Restart after changes:  docker compose restart
+
+sstp_users:
+  - user: keenetic
+    password: "CHANGE_ME_strong_password"
+  # - user: laptop
+  #   password: "another, password with comma"
+
+# format: "username": "32_hex_chars_secret"   (openssl rand -hex 16)
+mtproxy_users:
+  # bob: "0123456789abcdef0123456789abcdef"
+
+# Optional whitelist for the chat (E.164 phone numbers). Empty = anyone with CHAT_SECRET.
+chat_allowed_phones:
+  # - "+79991234567"

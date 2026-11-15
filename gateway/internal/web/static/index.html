@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<title>Aurora — демо мессенджера</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+:root{
+  --bg:#070b16; --bg2:#0d1426; --card:rgba(255,255,255,.04); --line:rgba(255,255,255,.08);
+  --text:#e9eefc; --muted:#94a0bf; --a1:#7c5cff; --a2:#22d3ee; --a3:#f472b6; --ok:#34d399;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,"Helvetica Neue",Arial,sans-serif;
+  background:var(--bg);color:var(--text);line-height:1.55;overflow-x:hidden}
+a{color:inherit;text-decoration:none}
+.wrap{max-width:1160px;margin:0 auto;padding:0 24px}
+
+/* background */
+.glow{position:fixed;inset:-20%;z-index:-2;pointer-events:none;
+  background:radial-gradient(600px 400px at 15% 20%,rgba(124,92,255,.25),transparent 60%),
+             radial-gradient(500px 380px at 85% 30%,rgba(34,211,238,.18),transparent 60%),
+             radial-gradient(700px 500px at 50% 100%,rgba(244,114,182,.14),transparent 60%);
+  animation:drift 18s ease-in-out infinite alternate}
+@keyframes drift{to{transform:translate3d(-3%,2%,0) scale(1.05)}}
+.grid-bg{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.25;
+  background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+  background-size:56px 56px;mask-image:radial-gradient(ellipse at center,#000 30%,transparent 75%)}
+
+/* nav */
+nav{position:sticky;top:0;z-index:10;backdrop-filter:blur(14px);background:rgba(7,11,22,.6);border-bottom:1px solid var(--line)}
+nav .wrap{display:flex;align-items:center;justify-content:space-between;height:64px}
+.logo{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.3px;font-size:20px}
+.logo i{width:30px;height:30px;border-radius:9px;background:conic-gradient(from 200deg,var(--a1),var(--a2),var(--a3),var(--a1));
+  box-shadow:0 0 24px rgba(124,92,255,.6)}
+.badge{font-size:12px;padding:5px 12px;border-radius:99px;border:1px solid rgba(124,92,255,.5);color:#c9bcff;background:rgba(124,92,255,.12)}
+nav ul{display:flex;gap:28px;list-style:none;font-size:14px;color:var(--muted)}
+nav ul a:hover{color:var(--text)}
+
+/* hero */
+.hero{display:grid;grid-template-columns:1.1fr .9fr;gap:48px;align-items:center;padding:90px 0 70px}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);padding:6px 14px;border:1px solid var(--line);border-radius:99px;background:var(--card)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 12px var(--ok);animation:pulse 2s infinite}
+@keyframes pulse{50%{opacity:.35}}
+h1{font-size:clamp(40px,6vw,72px);line-height:1.04;font-weight:850;letter-spacing:-1.5px;margin:22px 0 20px}
+.grad{background:linear-gradient(100deg,#fff 10%,#c4b5fd 40%,#67e8f9 70%,#f9a8d4);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lead{font-size:19px;color:var(--muted);max-width:540px}
+.cta{display:flex;gap:14px;margin-top:34px;flex-wrap:wrap}
+.btn{padding:14px 26px;border-radius:14px;font-weight:650;font-size:15px;transition:.25s;border:1px solid var(--line)}
+.btn.primary{background:linear-gradient(135deg,var(--a1),#5b8cff);border:0;box-shadow:0 10px 30px rgba(124,92,255,.45)}
+.btn.primary:hover{transform:translateY(-2px);box-shadow:0 16px 40px rgba(124,92,255,.6)}
+.btn.ghost:hover{background:var(--card)}
+.stats{display:flex;gap:36px;margin-top:46px}
+.stats b{display:block;font-size:28px;font-weight:800}
+.stats span{font-size:13px;color:var(--muted)}
+
+/* phone */
+.phone-wrap{position:relative;display:flex;justify-content:center}
+.phone{width:310px;height:630px;border-radius:46px;padding:12px;background:linear-gradient(160deg,#2a3150,#0b1022);
+  box-shadow:0 40px 80px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.08) inset,0 0 80px rgba(124,92,255,.25);
+  animation:float 6s ease-in-out infinite}
+@keyframes float{50%{transform:translateY(-14px) rotate(.6deg)}}
+.screen{width:100%;height:100%;border-radius:36px;overflow:hidden;background:linear-gradient(180deg,#0f1630,#0a0f20);display:flex;flex-direction:column}
+.notch{width:110px;height:26px;background:#05070f;border-radius:0 0 16px 16px;margin:0 auto}
+.chat-head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.av{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:14px}
+.av.a{background:linear-gradient(135deg,#f472b6,#fb923c)} .av.b{background:linear-gradient(135deg,#22d3ee,#6366f1)}
+.av.c{background:linear-gradient(135deg,#34d399,#06b6d4)} .av.d{background:linear-gradient(135deg,#a78bfa,#ec4899)}
+.chat-head .t b{display:block;font-size:14px} .chat-head .t span{font-size:11px;color:var(--ok)}
+.chat-head .icons{margin-left:auto;display:flex;gap:12px;opacity:.8}
+.msgs{flex:1;padding:14px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
+.m{max-width:78%;padding:9px 13px;border-radius:18px;font-size:13px;opacity:0;transform:translateY(12px) scale(.96);animation:pop .5s forwards}
+.m.in{background:#1c2545;border-bottom-left-radius:6px;align-self:flex-start}
+.m.out{background:linear-gradient(135deg,var(--a1),#5b8cff);border-bottom-right-radius:6px;align-self:flex-end}
+.m small{display:block;font-size:10px;opacity:.6;text-align:right;margin-top:2px}
+.m.file{display:flex;gap:10px;align-items:center}
+.m.file .ic{width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,.15);display:grid;place-items:center}
+.typing{align-self:flex-start;background:#1c2545;border-radius:18px;padding:10px 14px;display:flex;gap:4px;opacity:0;animation:pop .4s forwards}
+.typing i{width:6px;height:6px;border-radius:50%;background:#8b9ac4;animation:bounce 1.2s infinite}
+.typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
+@keyframes bounce{30%{transform:translateY(-5px)}}
+@keyframes pop{to{opacity:1;transform:none}}
+.composer{margin:10px;padding:10px 14px;border-radius:20px;background:#141c38;font-size:12px;color:var(--muted);display:flex;justify-content:space-between}
+.float-card{position:absolute;padding:12px 16px;border-radius:16px;background:rgba(18,25,48,.85);backdrop-filter:blur(10px);
+  border:1px solid var(--line);font-size:13px;box-shadow:0 20px 40px rgba(0,0,0,.4);display:flex;gap:10px;align-items:center}
+.fc1{left:-10px;top:90px;animation:float 7s ease-in-out infinite reverse}
+.fc2{right:-20px;bottom:120px;animation:float 8s ease-in-out infinite}
+.fc1 .ring{width:34px;height:34px;border-radius:50%;background:var(--ok);display:grid;place-items:center;box-shadow:0 0 0 0 rgba(52,211,153,.6);animation:ring 1.6s infinite}
+@keyframes ring{70%{box-shadow:0 0 0 14px rgba(52,211,153,0)}100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}}
+
+/* sections */
+section{padding:90px 0}
+.sec-title{text-align:center;max-width:720px;margin:0 auto 56px}
+.sec-title h2{font-size:clamp(30px,4vw,46px);font-weight:800;letter-spacing:-.8px;margin-bottom:14px}
+.sec-title p{color:var(--muted);font-size:17px}
+.features{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+.f{padding:30px;border-radius:24px;background:var(--card);border:1px solid var(--line);transition:.35s;position:relative;overflow:hidden}
+.f::before{content:"";position:absolute;inset:0;background:radial-gradient(400px 200px at var(--x,50%) -20%,rgba(124,92,255,.18),transparent 60%);opacity:0;transition:.35s}
+.f:hover{transform:translateY(-6px);border-color:rgba(124,92,255,.4)} .f:hover::before{opacity:1}
+.f .ico{width:52px;height:52px;border-radius:16px;display:grid;place-items:center;margin-bottom:20px;font-size:24px}
+.f h3{font-size:20px;margin-bottom:8px} .f p{color:var(--muted);font-size:15px}
+.i1{background:linear-gradient(135deg,rgba(124,92,255,.3),rgba(124,92,255,.08))}
+.i2{background:linear-gradient(135deg,rgba(34,211,238,.3),rgba(34,211,238,.08))}
+.i3{background:linear-gradient(135deg,rgba(244,114,182,.3),rgba(244,114,182,.08))}
+.i4{background:linear-gradient(135deg,rgba(52,211,153,.3),rgba(52,211,153,.08))}
+.i5{background:linear-gradient(135deg,rgba(251,146,60,.3),rgba(251,146,60,.08))}
+.i6{background:linear-gradient(135deg,rgba(96,165,250,.3),rgba(96,165,250,.08))}
+
+/* slides */
+.slider{position:relative;border-radius:32px;border:1px solid var(--line);background:linear-gradient(160deg,rgba(124,92,255,.10),rgba(34,211,238,.05));overflow:hidden}
+.slides{display:flex;transition:transform .8s cubic-bezier(.7,0,.2,1)}
+.slide{min-width:100%;display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:center;padding:60px}
+.slide h3{font-size:34px;font-weight:800;letter-spacing:-.5px;margin-bottom:14px}
+.slide p{color:var(--muted);font-size:17px}
+.slide .num{font-size:14px;color:#c4b5fd;font-weight:700;letter-spacing:2px;margin-bottom:12px}
+.visual{height:280px;border-radius:24px;background:rgba(7,11,22,.6);border:1px solid var(--line);position:relative;overflow:hidden;display:grid;place-items:center}
+.dots{display:flex;justify-content:center;gap:10px;padding:0 0 28px}
+.dots button{width:10px;height:10px;border-radius:99px;border:0;background:rgba(255,255,255,.25);cursor:pointer;transition:.3s}
+.dots button.on{width:34px;background:linear-gradient(90deg,var(--a1),var(--a2))}
+/* visuals */
+.call{display:flex;gap:18px}
+.call .v{width:150px;height:200px;border-radius:20px;position:relative;overflow:hidden}
+.call .v:nth-child(1){background:linear-gradient(160deg,#6d28d9,#db2777)}
+.call .v:nth-child(2){background:linear-gradient(160deg,#0891b2,#4f46e5)}
+.call .v span{position:absolute;bottom:10px;left:12px;font-size:12px;background:rgba(0,0,0,.35);padding:3px 9px;border-radius:99px}
+.call .v::after{content:"";position:absolute;width:70px;height:70px;border-radius:50%;background:rgba(255,255,255,.22);top:45px;left:40px;animation:pulse 3s infinite}
+.groups{display:flex;flex-direction:column;gap:10px;width:80%}
+.g{display:flex;align-items:center;gap:12px;padding:12px;border-radius:16px;background:rgba(255,255,255,.04);border:1px solid var(--line);animation:slidein .8s both}
+.g:nth-child(2){animation-delay:.15s}.g:nth-child(3){animation-delay:.3s}
+.g b{font-size:14px;display:block}.g span{font-size:12px;color:var(--muted)}
+.g em{margin-left:auto;font-style:normal;font-size:11px;background:var(--a1);border-radius:99px;padding:2px 8px}
+@keyframes slidein{from{opacity:0;transform:translateX(-20px)}}
+.lock{width:120px;height:120px;border-radius:32px;display:grid;place-items:center;font-size:56px;background:linear-gradient(135deg,rgba(124,92,255,.35),rgba(34,211,238,.25));box-shadow:0 0 60px rgba(124,92,255,.5);animation:float 5s ease-in-out infinite}
+.orbit{position:absolute;width:240px;height:240px;border:1px dashed rgba(255,255,255,.15);border-radius:50%;animation:spin 20s linear infinite}
+.orbit::after{content:"";position:absolute;width:12px;height:12px;border-radius:50%;background:var(--a2);top:-6px;left:50%;box-shadow:0 0 16px var(--a2)}
+@keyframes spin{to{transform:rotate(360deg)}}
+.files{display:grid;grid-template-columns:repeat(3,80px);gap:14px}
+.files div{height:96px;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid var(--line);display:grid;place-items:center;font-size:30px;animation:pop .6s both}
+.files div:nth-child(2){animation-delay:.1s}.files div:nth-child(3){animation-delay:.2s}.files div:nth-child(4){animation-delay:.3s}.files div:nth-child(5){animation-delay:.4s}.files div:nth-child(6){animation-delay:.5s}
+
+/* showcase strip */
+.strip{display:flex;gap:18px;overflow:hidden;mask-image:linear-gradient(90deg,transparent,#000 10%,#000 90%,transparent)}
+.strip .track{display:flex;gap:18px;animation:marquee 30s linear infinite}
+.strip .pill{white-space:nowrap;padding:14px 22px;border-radius:99px;border:1px solid var(--line);background:var(--card);color:var(--muted);font-size:15px}
+@keyframes marquee{to{transform:translateX(-50%)}}
+
+/* final */
+.final{text-align:center;padding:90px 30px;border-radius:36px;background:linear-gradient(135deg,rgba(124,92,255,.22),rgba(34,211,238,.12));border:1px solid rgba(124,92,255,.3);position:relative;overflow:hidden}
+.final h2{font-size:clamp(30px,4vw,48px);font-weight:850;letter-spacing:-1px;margin-bottom:16px}
+.final p{color:var(--muted);font-size:18px;max-width:600px;margin:0 auto}
+footer{padding:40px 0;text-align:center;color:var(--muted);font-size:13px}
+
+.reveal{opacity:0;transform:translateY(30px);transition:1s cubic-bezier(.2,.7,.2,1)}
+.reveal.on{opacity:1;transform:none}
+
+@media (max-width:920px){
+  .hero{grid-template-columns:1fr;padding-top:50px}
+  .features{grid-template-columns:1fr 1fr}
+  .slide{grid-template-columns:1fr;padding:36px}
+  nav ul{display:none}
+  .fc1,.fc2{display:none}
+}
+@media (max-width:600px){.features{grid-template-columns:1fr}.stats{gap:22px}}
+</style>
+</head>
+<body>
+<div class="glow"></div><div class="grid-bg"></div>
+
+<nav><div class="wrap">
+  <a class="logo" href="#"><i></i>Aurora</a>
+  <ul><li><a href="#features">Возможности</a></li><li><a href="#tour">Презентация</a></li><li><a href="#more">Ещё</a></li></ul>
+  <span class="badge">Демо-страница</span>
+</div></nav>
+
+<header class="wrap hero">
+  <div>
+    <span class="eyebrow"><span class="dot"></span>Демонстрационная версия</span>
+    <h1><span class="grad">Общение,<br>которое принадлежит вам</span></h1>
+    <p class="lead">Сообщения, звонки и видеосвязь для своих — быстро, красиво и приватно. Посмотрите, каким может быть мессенджер вашей команды и семьи.</p>
+    <div class="cta">
+      <a class="btn primary" href="#tour">Смотреть презентацию</a>
+      <a class="btn ghost" href="#features">Возможности</a>
+    </div>
+    <div class="stats">
+      <div><b data-count="100">0</b><span>участников в круге</span></div>
+      <div><b>HD</b><span>видеозвонки</span></div>
+      <div><b>0</b><span>лишних глаз</span></div>
+    </div>
+  </div>
+  <div class="phone-wrap">
+    <div class="float-card fc1"><div class="ring">📞</div><div><b>Входящий видеозвонок</b><br><span style="color:var(--muted)">Анна</span></div></div>
+    <div class="float-card fc2">🔒 <span>Только у вас на устройстве</span></div>
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="chat-head"><div class="av a">АН</div><div class="t"><b>Анна</b><span>в сети</span></div><div class="icons">📞 🎥</div></div>
+      <div class="msgs" id="msgs"></div>
+      <div class="composer"><span>Сообщение…</span><span>📎 🎤</span></div>
+    </div></div>
+  </div>
+</header>
+
+<div class="wrap"><div class="strip"><div class="track">
+  <span class="pill">💬 Личные чаты</span><span class="pill">👥 Группы</span><span class="pill">🎥 Видеозвонки</span><span class="pill">📞 Аудиозвонки</span><span class="pill">📎 Файлы и фото</span><span class="pill">⭐ Избранное</span><span class="pill">✓✓ Статусы доставки</span><span class="pill">🌙 Тёмная тема</span><span class="pill">📇 Контакты по номеру</span>
+  <span class="pill">💬 Личные чаты</span><span class="pill">👥 Группы</span><span class="pill">🎥 Видеозвонки</span><span class="pill">📞 Аудиозвонки</span><span class="pill">📎 Файлы и фото</span><span class="pill">⭐ Избранное</span><span class="pill">✓✓ Статусы доставки</span><span class="pill">🌙 Тёмная тема</span><span class="pill">📇 Контакты по номеру</span>
+</div></div></div>
+
+<section id="features" class="wrap">
+  <div class="sec-title reveal"><h2>Всё, что нужно для общения</h2><p>Ничего лишнего — только то, чем вы пользуетесь каждый день.</p></div>
+  <div class="features">
+    <div class="f reveal"><div class="ico i1">💬</div><h3>Мгновенные сообщения</h3><p>Переписка в реальном времени с отметками «доставлено» и «прочитано».</p></div>
+    <div class="f reveal"><div class="ico i2">🎥</div><h3>Видеозвонки</h3><p>Чёткая картинка и живой звук — напрямую между собеседниками.</p></div>
+    <div class="f reveal"><div class="ico i3">👥</div><h3>Групповые чаты</h3><p>Семья, друзья, рабочая команда — каждому кругу своё пространство.</p></div>
+    <div class="f reveal"><div class="ico i4">🔒</div><h3>Приватность</h3><p>История переписки живёт только на ваших устройствах.</p></div>
+    <div class="f reveal"><div class="ico i5">📎</div><h3>Файлы и медиа</h3><p>Фото, видео и документы — отправляйте всё, чем хочется поделиться.</p></div>
+    <div class="f reveal"><div class="ico i6">⭐</div><h3>Избранное</h3><p>Личное пространство для заметок, ссылок и важных сообщений.</p></div>
+  </div>
+</section>
+
+<section id="tour" class="wrap">
+  <div class="sec-title reveal"><h2>Презентация</h2><p>Четыре причины влюбиться в Aurora.</p></div>
+  <div class="slider reveal">
+    <div class="slides" id="slides">
+      <div class="slide"><div><div class="num">01 — ЗВОНКИ</div><h3>Лицом к лицу, где бы вы ни были</h3><p>Один тап — и вы видите близких. Видео и голос без задержек, словно собеседник рядом.</p></div>
+        <div class="visual"><div class="call"><div class="v"><span>Вы</span></div><div class="v"><span>Максим</span></div></div></div></div>
+      <div class="slide"><div><div class="num">02 — ГРУППЫ</div><h3>Ваши круги общения</h3><p>Создавайте группы за секунды, добавляйте участников и обсуждайте всё сразу со всеми.</p></div>
+        <div class="visual"><div class="groups">
+          <div class="g"><div class="av b">👨‍👩‍👧</div><div><b>Семья</b><span>Мама: Ужин в 7 🍝</span></div><em>3</em></div>
+          <div class="g"><div class="av c">🚀</div><div><b>Команда</b><span>Релиз сегодня!</span></div><em>12</em></div>
+          <div class="g"><div class="av d">🎸</div><div><b>Друзья</b><span>В субботу на концерт?</span></div><em>5</em></div>
+        </div></div></div>
+      <div class="slide"><div><div class="num">03 — ПРИВАТНОСТЬ</div><h3>Ваши слова остаются вашими</h3><p>Переписка хранится только на ваших устройствах. Никаких архивов на чужих серверах.</p></div>
+        <div class="visual"><div class="orbit"></div><div class="lock">🔐</div></div></div>
+      <div class="slide"><div><div class="num">04 — ФАЙЛЫ</div><h3>Делитесь моментами</h3><p>Фотографии с отпуска, документы, голосовые и видео — всё в одном месте.</p></div>
+        <div class="visual"><div class="files"><div>🖼️</div><div>🎬</div><div>📄</div><div>🎵</div><div>📊</div><div>📦</div></div></div></div>
+    </div>
+    <div class="dots" id="dots"></div>
+  </div>
+</section>
+
+<section id="more" class="wrap">
+  <div class="final reveal">
+    <h2>Это демо-страница</h2>
+    <p>Так может выглядеть ваш собственный мессенджер — для команды, семьи и друзей.</p>
+  </div>
+</section>
+
+<footer>© Aurora · демонстрационная страница</footer>
+
+<script>
+(function(){
+  var script=[
+    {t:'in',x:'Привет! Ты уже попробовал новый мессенджер? 😊'},
+    {t:'out',x:'Да! Очень быстро работает 🔥'},
+    {t:'typing'},
+    {t:'in',x:'Сейчас скину фотки с выходных'},
+    {t:'file',x:'photos_weekend.zip',s:'24 МБ'},
+    {t:'out',x:'Огонь! Созвонимся по видео вечером?'},
+    {t:'in',x:'Конечно, в 8 🎥'}
+  ];
+  var box=document.getElementById('msgs');
+  function time(){var d=new Date();return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)}
+  function run(){
+    box.innerHTML='';var i=0;
+    (function next(){
+      if(i>=script.length){setTimeout(run,4000);return}
+      var s=script[i++],el;
+      if(s.t==='typing'){el=document.createElement('div');el.className='typing';el.innerHTML='<i></i><i></i><i></i>';box.appendChild(el);
+        setTimeout(function(){el.remove();next()},1600);return}
+      el=document.createElement('div');
+      if(s.t==='file'){el.className='m in file';el.innerHTML='<div class="ic">📦</div><div>'+s.x+'<small>'+s.s+'</small></div>'}
+      else{el.className='m '+s.t;el.textContent=s.x;var sm=document.createElement('small');sm.textContent=time()+(s.t==='out'?' ✓✓':'');el.appendChild(sm)}
+      box.appendChild(el);setTimeout(next,1300);
+    })();
+  }
+  run();
+
+  var slides=document.getElementById('slides'),dots=document.getElementById('dots'),n=slides.children.length,cur=0,timer;
+  for(var k=0;k<n;k++){(function(k){var b=document.createElement('button');b.setAttribute('aria-label','Слайд '+(k+1));b.onclick=function(){go(k)};dots.appendChild(b)})(k)}
+  function go(k){cur=(k+n)%n;slides.style.transform='translateX(-'+cur*100+'%)';
+    [].forEach.call(dots.children,function(d,j){d.className=j===cur?'on':''});
+    var v=slides.children[cur].querySelector('.visual');var c=v.innerHTML;v.innerHTML='';v.offsetHeight;v.innerHTML=c;
+    clearInterval(timer);timer=setInterval(function(){go(cur+1)},5000)}
+  go(0);
+
+  var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('on');io.unobserve(e.target)}})},{threshold:.15});
+  document.querySelectorAll('.reveal').forEach(function(el){io.observe(el)});
+  document.querySelectorAll('.f').forEach(function(f){f.addEventListener('mousemove',function(e){var r=f.getBoundingClientRect();f.style.setProperty('--x',(e.clientX-r.left)+'px')})});
+  document.querySelectorAll('[data-count]').forEach(function(el){var to=+el.dataset.count,v=0;var t=setInterval(function(){v+=Math.ceil(to/40);if(v>=to){v=to;clearInterval(t)}el.textContent=v},30)});
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+# securegate: SSTP VPN + MTProxy (telemt) + chat server + TURN + demo site on one domain / port 443.
+# Usage:  cp .env.example .env  &&  edit .env  &&  docker compose up -d --build
+name: securegate
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  gateway:
+    build: ./gateway
+    image: securegate-gateway:local
+    container_name: securegate-gateway
+    # host network: pppd creates ppp* interfaces on the host, NAT for VPN clients,
+    # TURN UDP relay ports, real client IPs for the protection layer.
+    network_mode: host
+    # needed for pppd (/dev/ppp), iptables/nftables (NAT + bans) and net.ipv4.ip_forward
+    privileged: true
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      USERS_FILE: /config/users.yml
+      MTPROXY_CONFIG_DIR: /data/mtproxy
+    volumes:
+      - ./data:/data
+      - ./config:/config:ro
+      - /lib/modules:/lib/modules:ro
+    logging: *logging
+
+  mtproxy:
+    build: ./mtproxy
+    image: securegate-mtproxy:local
+    container_name: securegate-mtproxy
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - gateway
+    volumes:
+      - ./data/mtproxy:/etc/telemt
+    logging: *logging
