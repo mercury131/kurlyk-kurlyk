@@ -1,0 +1,165 @@
+<resources>
+    <string name="app_name">Kurlyk Kurlyk</string>
+    <string name="app_subtitle">Private end-to-end encrypted messenger</string>
+
+    <!-- Sign in -->
+    <string name="sign_in_title">Kurlyk Kurlyk</string>
+    <string name="sign_in_subtitle">Connect to your private self-hosted server</string>
+    <string name="server_domain_label">Server domain</string>
+    <string name="server_domain_hint">chat.example.com</string>
+    <string name="secret_key_label">Secret key</string>
+    <string name="phone_number_label">Phone number</string>
+    <string name="country_code_label">Code</string>
+    <string name="display_name_label">Your name</string>
+    <string name="connect_button">Connect</string>
+    <string name="connecting">Connecting…</string>
+    <string name="waiting_for_network">Waiting for network…</string>
+    <string name="connected">Connected</string>
+    <string name="error_invalid_domain">Enter a valid server domain (e.g. chat.example.com)</string>
+    <string name="error_invalid_phone">Enter a valid international phone number</string>
+    <string name="error_empty_secret">Enter the server secret key</string>
+    <string name="error_empty_name">Enter your display name</string>
+    <string name="error_invalid_secret">Invalid secret key</string>
+    <string name="signed_in_elsewhere">Signed in on another device</string>
+    <string name="reconnect">Reconnect</string>
+
+    <!-- Permissions -->
+    <string name="contacts_permission_title">Show your contacts\' names</string>
+    <string name="contacts_permission_rationale">Aurora Messenger matches registered server numbers against your phone address book locally on your device so you see familiar names.</string>
+    <string name="allow">Allow</string>
+    <string name="not_now">Not now</string>
+
+    <!-- Chats List & Drawer -->
+    <string name="tab_all">All</string>
+    <string name="tab_personal">Personal</string>
+    <string name="tab_groups">Groups</string>
+    <string name="saved_messages">Saved messages</string>
+    <string name="saved_messages_subtitle">Local encrypted notes &amp; files</string>
+    <string name="new_message">New message</string>
+    <string name="new_group">New group</string>
+    <string name="contacts">Contacts</string>
+    <string name="calls">Calls</string>
+    <string name="settings">Settings</string>
+    <string name="no_chats_yet">No chats yet</string>
+    <string name="no_chats_hint">Tap the pencil button to start a conversation</string>
+    <string name="search_hint">Search by name or number…</string>
+    <string name="you_prefix">You:</string>
+    <string name="pin">Pin</string>
+    <string name="unpin">Unpin</string>
+    <string name="mute">Mute</string>
+    <string name="unmute">Unmute</string>
+    <string name="archive">Archive</string>
+    <string name="unarchive">Unarchive</string>
+    <string name="mark_read">Mark read</string>
+    <string name="archived_chats">Archived</string>
+    <string name="selected_count">%1$d selected</string>
+
+    <!-- Contacts -->
+    <string name="on_this_server">On this server</string>
+    <string name="no_contacts_found">No users found</string>
+    <string name="online">online</string>
+    <string name="typing">typing…</string>
+    <string name="last_seen_at">last seen at %1$s</string>
+    <string name="last_seen_recently">last seen recently</string>
+
+    <!-- Chat screen -->
+    <string name="message_hint">Message</string>
+    <string name="send">Send</string>
+    <string name="record_voice">Hold to record voice</string>
+    <string name="slide_to_cancel">Slide left to cancel</string>
+    <string name="unable_to_decrypt">⚠ Unable to decrypt (different secret key?)</string>
+    <string name="deleted_message">Message deleted</string>
+    <string name="edited_label">edited</string>
+    <string name="reply">Reply</string>
+    <string name="copy">Copy</string>
+    <string name="edit">Edit</string>
+    <string name="delete_for_me">Delete for me</string>
+    <string name="delete_for_everyone">Delete for everyone</string>
+    <string name="forward">Forward</string>
+    <string name="add_to_saved">Add to Saved messages</string>
+    <string name="save_to_downloads">Save to Downloads</string>
+    <string name="saved_to_downloads">Saved to Downloads</string>
+    <string name="group_read_only">You are no longer a member</string>
+    <string name="members_count">%1$d members</string>
+    <string name="attach_gallery">Photo or Video</string>
+    <string name="attach_camera">Camera</string>
+    <string name="attach_file">File</string>
+    <string name="photo_preview">📷 Photo</string>
+    <string name="video_preview">🎬 Video</string>
+    <string name="voice_preview">🎤 Voice message</string>
+    <string name="file_preview">📎 %1$s</string>
+    <string name="call_preview">📞 Call</string>
+    <string name="editing_message">Editing message</string>
+    <string name="replying_to">Replying to %1$s</string>
+
+    <!-- Groups -->
+    <string name="group_name_label">Group name</string>
+    <string name="select_members">Select members</string>
+    <string name="create_group">Create group</string>
+    <string name="group_info">Group info</string>
+    <string name="owner_badge">Owner</string>
+    <string name="add_members">Add members</string>
+    <string name="remove_member">Remove</string>
+    <string name="rename_group">Rename group</string>
+    <string name="leave_group">Leave group</string>
+    <string name="delete_group">Delete group</string>
+
+    <!-- Profile & Avatar -->
+    <string name="profile">Profile</string>
+    <string name="send_message">Send message</string>
+    <string name="audio_call">Audio call</string>
+    <string name="video_call">Video call</string>
+    <string name="tab_media">Media</string>
+    <string name="tab_files">Files</string>
+    <string name="tab_voice">Voice</string>
+    <string name="set_photo_gallery">Set photo from gallery</string>
+    <string name="take_photo">Take photo</string>
+    <string name="remove_photo">Remove photo</string>
+    <string name="crop_avatar_title">Position &amp; zoom</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+
+    <!-- Calls -->
+    <string name="calling">Calling…</string>
+    <string name="incoming_audio_call">Incoming audio call</string>
+    <string name="incoming_video_call">Incoming video call</string>
+    <string name="accept">Accept</string>
+    <string name="decline">Decline</string>
+    <string name="hang_up">Hang up</string>
+    <string name="call_missed">Missed call</string>
+    <string name="call_declined">Call declined</string>
+    <string name="call_ended">Call ended</string>
+    <string name="call_busy">Line busy</string>
+    <string name="call_unavailable">User offline</string>
+    <string name="no_calls_yet">No call history yet</string>
+
+    <!-- Settings -->
+    <string name="edit_name">Edit display name</string>
+    <string name="theme_title">Theme</string>
+    <string name="theme_dark">Dark</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_system">System default</string>
+    <string name="wallpaper_title">Chat wallpaper</string>
+    <string name="notifications_title">Notifications</string>
+    <string name="notification_sound">Sound</string>
+    <string name="notification_vibration">Vibration</string>
+    <string name="auto_download_title">Auto-download photos on Wi-Fi</string>
+    <string name="storage_title">Storage &amp; cache</string>
+    <string name="clear_cache">Clear cache</string>
+    <string name="cache_cleared">Cache cleared</string>
+    <string name="app_lock_title">App lock (Biometric / PIN)</string>
+    <string name="app_lock_prompt">Unlock Kurlyk Kurlyk</string>
+    <string name="server_info_title">Server information</string>
+    <string name="dev_self_signed">Allow self-signed certificate (testing)</string>
+    <string name="log_out">Log out</string>
+    <string name="log_out_confirm">Logging out will invalidate your session and permanently wipe all local messages and cached files on this device. Continue?</string>
+    <string name="app_version">App version %1$s</string>
+
+    <!-- Notifications -->
+    <string name="channel_messages_name">Messages</string>
+    <string name="channel_calls_name">Calls</string>
+    <string name="channel_service_name">Background connection</string>
+    <string name="service_notification_title">Kurlyk Kurlyk</string>
+    <string name="service_notification_connected">Encrypted connection active</string>
+    <string name="service_notification_connecting">Connecting to server…</string>
+</resources>

@@ -113,7 +113,7 @@ func (s *Server) handle(c net.Conn) {
 	if s.MT != nil {
 		if user, ok := s.MT.Match(rec); ok {
 			_ = c.SetReadDeadline(time.Time{})
-			slog.Debug("mux: mtproxy client", "ip", ip, "user", user)
+			slog.Info("mtproxy: client", "ip", ip, "user", user, "sni", parseSNI(rec[5:]))
 			s.MT.Forward(c, rec)
 			return
 		}

@@ -1,0 +1,165 @@
+<resources>
+    <string name="app_name">Kurlyk Kurlyk</string>
+    <string name="app_subtitle">Приватный мессенджер со сквозным шифрованием</string>
+
+    <!-- Sign in -->
+    <string name="sign_in_title">Kurlyk Kurlyk</string>
+    <string name="sign_in_subtitle">Подключитесь к вашему приватному серверу</string>
+    <string name="server_domain_label">Домен сервера</string>
+    <string name="server_domain_hint">chat.example.com</string>
+    <string name="secret_key_label">Секретный ключ</string>
+    <string name="phone_number_label">Номер телефона</string>
+    <string name="country_code_label">Код</string>
+    <string name="display_name_label">Ваше имя</string>
+    <string name="connect_button">Подключиться</string>
+    <string name="connecting">Подключение…</string>
+    <string name="waiting_for_network">Ожидание сети…</string>
+    <string name="connected">Подключено</string>
+    <string name="error_invalid_domain">Введите корректный домен сервера (например, chat.example.com)</string>
+    <string name="error_invalid_phone">Введите корректный международный номер телефона</string>
+    <string name="error_empty_secret">Введите секретный ключ сервера</string>
+    <string name="error_empty_name">Введите ваше имя</string>
+    <string name="error_invalid_secret">Неверный секретный ключ</string>
+    <string name="signed_in_elsewhere">Вход выполнен на другом устройстве</string>
+    <string name="reconnect">Переподключиться</string>
+
+    <!-- Permissions -->
+    <string name="contacts_permission_title">Показывать имена из контактов</string>
+    <string name="contacts_permission_rationale">Мессенджер локально сопоставляет номера с сервера с вашей адресной книгой, чтобы отображать знакомые имена.</string>
+    <string name="allow">Разрешить</string>
+    <string name="not_now">Не сейчас</string>
+
+    <!-- Chats List & Drawer -->
+    <string name="tab_all">Все</string>
+    <string name="tab_personal">Личные</string>
+    <string name="tab_groups">Группы</string>
+    <string name="saved_messages">Избранное</string>
+    <string name="saved_messages_subtitle">Локальные зашифрованные заметки и файлы</string>
+    <string name="new_message">Новое сообщение</string>
+    <string name="new_group">Создать группу</string>
+    <string name="contacts">Контакты</string>
+    <string name="calls">Звонки</string>
+    <string name="settings">Настройки</string>
+    <string name="no_chats_yet">Пока нет чатов</string>
+    <string name="no_chats_hint">Нажмите на кнопку карандаша, чтобы начать общение</string>
+    <string name="search_hint">Поиск по имени или номеру…</string>
+    <string name="you_prefix">Вы:</string>
+    <string name="pin">Закрепить</string>
+    <string name="unpin">Открепить</string>
+    <string name="mute">Без звука</string>
+    <string name="unmute">Включить звук</string>
+    <string name="archive">В архив</string>
+    <string name="unarchive">Из архива</string>
+    <string name="mark_read">Прочитано</string>
+    <string name="archived_chats">Архив</string>
+    <string name="selected_count">Выбрано: %1$d</string>
+
+    <!-- Contacts -->
+    <string name="on_this_server">На этом сервере</string>
+    <string name="no_contacts_found">Пользователи не найдены</string>
+    <string name="online">в сети</string>
+    <string name="typing">печатает…</string>
+    <string name="last_seen_at">был(а) в %1$s</string>
+    <string name="last_seen_recently">был(а) недавно</string>
+
+    <!-- Chat screen -->
+    <string name="message_hint">Сообщение</string>
+    <string name="send">Отправить</string>
+    <string name="record_voice">Удерживайте для записи</string>
+    <string name="slide_to_cancel">Смахните влево для отмены</string>
+    <string name="unable_to_decrypt">⚠ Не удалось расшифровать (другой секретный ключ?)</string>
+    <string name="deleted_message">Сообщение удалено</string>
+    <string name="edited_label">изменено</string>
+    <string name="reply">Ответить</string>
+    <string name="copy">Копировать</string>
+    <string name="edit">Изменить</string>
+    <string name="delete_for_me">Удалить у меня</string>
+    <string name="delete_for_everyone">Удалить у всех</string>
+    <string name="forward">Переслать</string>
+    <string name="add_to_saved">В Избранное</string>
+    <string name="save_to_downloads">Сохранить в Загрузки</string>
+    <string name="saved_to_downloads">Сохранено в Загрузки</string>
+    <string name="group_read_only">Вы больше не являетесь участником</string>
+    <string name="members_count">Участников: %1$d</string>
+    <string name="attach_gallery">Фото или видео</string>
+    <string name="attach_camera">Камера</string>
+    <string name="attach_file">Файл</string>
+    <string name="photo_preview">📷 Фото</string>
+    <string name="video_preview">🎬 Видео</string>
+    <string name="voice_preview">🎤 Голосовое сообщение</string>
+    <string name="file_preview">📎 %1$s</string>
+    <string name="call_preview">📞 Звонок</string>
+    <string name="editing_message">Редактирование</string>
+    <string name="replying_to">Ответ для %1$s</string>
+
+    <!-- Groups -->
+    <string name="group_name_label">Название группы</string>
+    <string name="select_members">Выберите участников</string>
+    <string name="create_group">Создать группу</string>
+    <string name="group_info">Информация о группе</string>
+    <string name="owner_badge">Владелец</string>
+    <string name="add_members">Добавить участников</string>
+    <string name="remove_member">Удалить</string>
+    <string name="rename_group">Переименовать группу</string>
+    <string name="leave_group">Покинуть группу</string>
+    <string name="delete_group">Удалить группу</string>
+
+    <!-- Profile & Avatar -->
+    <string name="profile">Профиль</string>
+    <string name="send_message">Написать сообщение</string>
+    <string name="audio_call">Аудиозвонок</string>
+    <string name="video_call">Видеозвонок</string>
+    <string name="tab_media">Медиа</string>
+    <string name="tab_files">Файлы</string>
+    <string name="tab_voice">Голосовые</string>
+    <string name="set_photo_gallery">Выбрать фото из галереи</string>
+    <string name="take_photo">Сделать фото</string>
+    <string name="remove_photo">Удалить фото</string>
+    <string name="crop_avatar_title">Кадрирование фото</string>
+    <string name="save">Сохранить</string>
+    <string name="cancel">Отмена</string>
+
+    <!-- Calls -->
+    <string name="calling">Вызов…</string>
+    <string name="incoming_audio_call">Входящий аудиозвонок</string>
+    <string name="incoming_video_call">Входящий видеозвонок</string>
+    <string name="accept">Ответить</string>
+    <string name="decline">Отклонить</string>
+    <string name="hang_up">Завершить</string>
+    <string name="call_missed">Пропущенный звонок</string>
+    <string name="call_declined">Звонок отклонён</string>
+    <string name="call_ended">Звонок завершён</string>
+    <string name="call_busy">Абонент занят</string>
+    <string name="call_unavailable">Пользователь не в сети</string>
+    <string name="no_calls_yet">История звонков пуста</string>
+
+    <!-- Settings -->
+    <string name="edit_name">Изменить имя</string>
+    <string name="theme_title">Тема оформления</string>
+    <string name="theme_dark">Тёмная</string>
+    <string name="theme_light">Светлая</string>
+    <string name="theme_system">Как в системе</string>
+    <string name="wallpaper_title">Обои чата</string>
+    <string name="notifications_title">Уведомления</string>
+    <string name="notification_sound">Звук</string>
+    <string name="notification_vibration">Вибрация</string>
+    <string name="auto_download_title">Автозагрузка фото по Wi-Fi</string>
+    <string name="storage_title">Память и кэш</string>
+    <string name="clear_cache">Очистить кэш</string>
+    <string name="cache_cleared">Кэш очищен</string>
+    <string name="app_lock_title">Блокировка приложения (Биометрия / ПИН)</string>
+    <string name="app_lock_prompt">Разблокируйте Kurlyk Kurlyk</string>
+    <string name="server_info_title">Информация о сервере</string>
+    <string name="dev_self_signed">Разрешить самоподписанный сертификат (тест)</string>
+    <string name="log_out">Выйти</string>
+    <string name="log_out_confirm">Выход аннулирует токен сессии и безвозвратно удалит все локальные сообщения и файлы на этом устройстве. Продолжить?</string>
+    <string name="app_version">Версия %1$s</string>
+
+    <!-- Notifications -->
+    <string name="channel_messages_name">Сообщения</string>
+    <string name="channel_calls_name">Звонки</string>
+    <string name="channel_service_name">Фоновое подключение</string>
+    <string name="service_notification_title">Kurlyk Kurlyk</string>
+    <string name="service_notification_connected">Шифрованное соединение активно</string>
+    <string name="service_notification_connecting">Подключение к серверу…</string>
+</resources>

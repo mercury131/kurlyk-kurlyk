@@ -1,0 +1,6 @@
+{
+  "name": "Kurlyk Kurlyk",
+  "description": "Private end-to-end encrypted messenger with 1:1 chats, groups, Saved messages, file sharing, and WebRTC audio/video calls.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -5,3 +5,5 @@ sstp.txt
 work.txt
 log.txt
 start-work.txt
+*.apk
+mobile/*.zip
