@@ -1,0 +1,35 @@
+# securegate PROXY server (second entry point in front of the main server), slim variant for
+# small servers (512 MB RAM): one small container, no telemt/pppd, quick low-memory build.
+# Usage on the PROXY server:
+#   .env:  PROXY=true  DOMAIN=<proxy domain>  DOMAIN_TO_PROXY=<main server domain>
+#   docker compose -f docker-compose.proxy.yml up -d --build
+# The main server keeps using docker-compose.yml (add PROXY_FRONTENDS=<proxy domain> there).
+name: securegate-proxy
+
+services:
+  proxy:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile.proxy
+    image: securegate-proxy:local
+    container_name: securegate-proxy
+    # host network: listens on 80/tcp, 443/tcp and the TURN UDP port (3478) of the server,
+    # sees real client IPs
+    network_mode: host
+    # optional kernel-level bans (nftables); without it bans are applied in-process
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PROXY: "true"
+      DATA_DIR: /data
+      MTPROXY_CONFIG_DIR: /data/mtproxy
+    volumes:
+      - ./data:/data
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
