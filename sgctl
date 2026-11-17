@@ -11,12 +11,20 @@
 #   ./sgctl bans | unban <ip|all>           protection: list / remove bans
 #   ./sgctl status                          containers and ports
 #
+#   ./sgctl up                              build + start (= docker compose up -d --build)
+#   ./sgctl ps | logs [service] | restart [service] | down | build
+#   ./sgctl compose <args...>               any compose command
+# Works with the compose plugin (docker compose) and the standalone docker-compose v2 binary.
+# The old docker-compose v1 (python, 1.x) is refused: with current Docker (containerd image
+# store) it fails to re-create containers on updates and leaves services stopped.
+# On a proxy server docker-compose.proxy.yml is used (SGCTL_COMPOSE_FILE overrides).
+#
 # --via <host>: endpoint in the WireGuard config. Default is DOMAIN; use the domain of a proxy
 # instance (PROXY_FRONTENDS) to give the client a config that connects through that proxy.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 
-usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
 
 env_val() { # value of KEY from .env (last assignment wins, quotes stripped)
   [ -f .env ] || return 0
@@ -24,14 +32,49 @@ env_val() { # value of KEY from .env (last assignment wins, quotes stripped)
 }
 is_proxy() { case "$(env_val PROXY | tr 'A-Z' 'a-z')" in 1|true|yes|on) return 0;; esac; return 1; }
 
+# Containers are addressed by name with plain `docker exec`, so sgctl works with both the
+# compose plugin (docker compose) and the standalone docker-compose binary.
+running() { docker ps --format '{{.Names}}' | grep -qx "$1"; }
+
+# ---- compose wrapper -------------------------------------------------------------------------
+compose_file() {
+  if [ -n "${SGCTL_COMPOSE_FILE:-}" ]; then echo "$SGCTL_COMPOSE_FILE"
+  elif [ -f docker-compose.proxy.yml ] && { running securegate-proxy || { is_proxy && ! running securegate-gateway; }; }; then
+    echo docker-compose.proxy.yml
+  else echo docker-compose.yml; fi
+}
 compose() {
-  if [ -f docker-compose.proxy.yml ] && docker ps --format '{{.Names}}' | grep -qx securegate-proxy; then
-    docker compose -f docker-compose.proxy.yml "$@"
+  local f ver
+  f=$(compose_file)
+  if docker compose version >/dev/null 2>&1; then
+    docker compose -f "$f" "$@"
+  elif command -v docker-compose >/dev/null 2>&1; then
+    ver=$(docker-compose version --short 2>/dev/null || true)
+    case "$ver" in
+      1.*)
+        cat >&2 <<MSG
+docker-compose $ver (v1) is too old: with current Docker it breaks container updates.
+Install Compose v2 (keeps all data, containers and .env):
+  Ubuntu/Debian packages:      apt install docker-compose-v2
+  Docker's own apt repository: apt install docker-compose-plugin
+then run ./sgctl up again (or: docker compose up -d --build).
+MSG
+        exit 1 ;;
+    esac
+    docker-compose -f "$f" "$@"
   else
-    docker compose "$@"
+    echo "neither 'docker compose' nor 'docker-compose' found - install Docker Compose" >&2; exit 1
   fi
 }
-tty_flag() { if [ -t 0 ] && [ -t 1 ]; then echo ""; else echo "-T"; fi; }
+dexec() { # dexec <container> <cmd...>   (interactive TTY when run from a terminal)
+  if [ -t 0 ] && [ -t 1 ]; then docker exec -it "$@"; else docker exec -i "$@"; fi
+}
+# container with the gateway/sgproxy binary (bans): full gateway or the slim proxy
+admin_container() {
+  if running securegate-gateway; then echo "securegate-gateway gateway"
+  elif running securegate-proxy; then echo "securegate-proxy sgproxy"
+  else echo "neither securegate-gateway nor securegate-proxy is running" >&2; exit 1; fi
+}
 
 need_main() {
   if is_proxy; then
@@ -39,8 +82,8 @@ need_main() {
     echo "There:  ./sgctl wg add <name> --via $(env_val DOMAIN)     (config that connects through this proxy)"
     exit 1
   fi
-  if ! docker ps --format '{{.Names}}' | grep -qx securegate-wireguard; then
-    echo "The wireguard container is not running:  docker compose up -d --build   (logs: docker compose logs wireguard)"
+  if ! running securegate-wireguard; then
+    echo "The wireguard container is not running:  ./sgctl up   (logs: ./sgctl logs wireguard)"
     exit 1
   fi
 }
@@ -49,8 +92,7 @@ cmd=${1:-help}; [ $# -gt 0 ] && shift
 case "$cmd" in
   wg|wireguard)
     need_main
-    # shellcheck disable=SC2046
-    exec docker compose exec $(tty_flag) wireguard wgctl "$@"
+    dexec securegate-wireguard wgctl "$@"
     ;;
   mtproxy|mt)
     f=data/mtproxy-links.txt
@@ -61,7 +103,7 @@ case "$cmd" in
       [ -n "$line" ] || { echo "no link for user=$user impl=$impl ${host:+host=$host}"; exit 1; }
       url=${line##*: }
       echo "$line"
-      if docker ps --format '{{.Names}}' | grep -qx securegate-wireguard; then
+      if running securegate-wireguard; then
         docker exec securegate-wireguard qrencode -t ansiutf8 -m 2 "$url"
       elif command -v qrencode >/dev/null; then
         qrencode -t ansiutf8 -m 2 "$url"
@@ -75,13 +117,13 @@ case "$cmd" in
     fi
     ;;
   bans)
-    if is_proxy; then compose exec -T proxy sgproxy bans 2>/dev/null || compose exec -T gateway gateway bans
-    else compose exec -T gateway gateway bans; fi
+    # shellcheck disable=SC2046
+    docker exec $(admin_container) bans
     ;;
   unban)
     ip=${1:?usage: ./sgctl unban <ip|all>}
-    if is_proxy; then compose exec -T proxy sgproxy unban "$ip" 2>/dev/null || compose exec -T gateway gateway unban "$ip"
-    else compose exec -T gateway gateway unban "$ip"; fi
+    # shellcheck disable=SC2046
+    docker exec $(admin_container) unban "$ip"
     ;;
   status)
     docker ps -a --filter name=securegate --format 'table {{.Names}}\t{{.Status}}'
@@ -89,6 +131,13 @@ case "$cmd" in
     ss -lntup 2>/dev/null | grep -E 'gateway|sgproxy|telemt|python|teleproxy|:(80|443|3478|51820|2053|2083) ' || true
     ip -br link show "$(env_val WG_INTERFACE || true)" 2>/dev/null || ip -br link show sgwg0 2>/dev/null || true
     ;;
+  up)       compose up -d --build "$@" ;;
+  build)    compose build "$@" ;;
+  ps)       compose ps "$@" ;;
+  logs)     compose logs --tail "${SGCTL_TAIL:-100}" -f "$@" ;;
+  restart)  compose restart "$@" ;;
+  down)     compose down "$@" ;;
+  compose|dc) compose "$@" ;;
   help|-h|--help) usage ;;
   *) usage; exit 2 ;;
 esac

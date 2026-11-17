@@ -39,6 +39,11 @@ docker compose up -d --build
 docker compose logs -f gateway
 ```
 
+Docker Compose: плагин `docker compose` или отдельный `docker-compose` версии 2 (с ним команды те же,
+через дефис). `./sgctl up | ps | logs | restart | down` сам выбирает установленный вариант.
+Старый `docker-compose` 1.x не поддерживается: с современным Docker он не может пересоздать
+контейнеры при обновлении — поставьте v2 (`apt install docker-compose-v2`).
+
 ### Firewall (ufw)
 
 Если на сервере используется ufw — откройте порты (сначала обязательно SSH, иначе после
