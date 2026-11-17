@@ -1,0 +1,16 @@
+# Slim image for PROXY mode only (servers with 512 MB RAM). Used by docker-compose.proxy.yml.
+# Builds just the relay (cmd/sgproxy: no SSTP/MTProxy/chat/TURN code), one compile job at a time.
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+ENV CGO_ENABLED=0 GOFLAGS="-trimpath -p=1" GOMAXPROCS=1 GOGC=50
+COPY . .
+# only the modules needed by sgproxy are downloaded (not pion/websocket/bbolt)
+RUN go build -ldflags="-s -w" -o /out/sgproxy ./cmd/sgproxy
+
+FROM alpine:3.20
+# nftables: optional kernel-level bans (GUARD_NFTABLES=true + cap NET_ADMIN)
+RUN apk add --no-cache nftables tzdata
+COPY --from=build /out/sgproxy /usr/local/bin/sgproxy
+VOLUME ["/data"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD ["/usr/local/bin/sgproxy", "healthcheck"]
+ENTRYPOINT ["/usr/local/bin/sgproxy"]

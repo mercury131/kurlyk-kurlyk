@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"securegate/internal/admin"
 	"securegate/internal/certs"
 	"securegate/internal/chat"
 	"securegate/internal/config"
@@ -26,6 +27,7 @@ import (
 	"securegate/internal/mtproxy"
 	"securegate/internal/mux"
 	"securegate/internal/netx"
+	"securegate/internal/proxy"
 	"securegate/internal/sstp"
 	"securegate/internal/turnsrv"
 	"securegate/internal/web"
@@ -35,9 +37,9 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "healthcheck":
-			os.Exit(healthcheck())
+			os.Exit(admin.Healthcheck())
 		case "bans", "unban":
-			os.Exit(adminBans(os.Args[1:]))
+			os.Exit(admin.Bans(os.Args[1:]))
 		}
 	}
 	cfg, err := config.Load()
@@ -56,24 +58,12 @@ func main() {
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
 	if cfg.ProxyMode {
-		runProxy(cfg)
+		proxy.Run(cfg)
 		return
 	}
 	slog.Info("securegate starting", "domain", cfg.Domain, "tls_mode", cfg.TLSMode,
 		"sstp", cfg.SSTPEnable, "mtproxy", cfg.MTEnable, "chat", cfg.ChatEnable, "turn", cfg.TURNEnable)
 	_ = os.MkdirAll(cfg.DataDir, 0o700)
-
-	g := guard.New(guard.Config{
-		MaxConnPerIP: cfg.GuardMaxConnPerIP,
-		RatePerMin:   cfg.GuardRatePerMin,
-		Strikes:      cfg.GuardStrikes,
-		BanBase:      cfg.GuardBan,
-		Whitelist:    cfg.GuardWhitelist,
-		NFT:          cfg.GuardNFT,
-		NFTPorts:     []int{80, cfg.HTTPSPort, cfg.TURNUDPPort},
-		StateFile:    filepath.Join(cfg.DataDir, "guard", "bans.json"),
-	})
-	defer g.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -82,6 +72,19 @@ func main() {
 		slog.Info("frontend: proxy instances relay to this server", "domains", cfg.ProxyFrontends, "trusted_ips", len(cfg.ProxyTrusted))
 		go fe.Run(ctx)
 	}
+
+	g := guard.New(guard.Config{
+		MaxConnPerIP: cfg.GuardMaxConnPerIP,
+		RatePerMin:   cfg.GuardRatePerMin,
+		Strikes:      cfg.GuardStrikes,
+		BanBase:      cfg.GuardBan,
+		Whitelist:    cfg.GuardWhitelist,
+		Exempt:       fe.Trusted, // a proxy instance is never banned (its clients are, by real IP)
+		NFT:          cfg.GuardNFT,
+		NFTPorts:     []int{80, cfg.HTTPSPort, cfg.TURNUDPPort},
+		StateFile:    filepath.Join(cfg.DataDir, "guard", "bans.json"),
+	})
+	defer g.Close()
 
 	cm, err := certs.New(cfg.Hosts(), cfg.TLSMode, cfg.ACMEEmail, cfg.DataDir, cfg.ACMEStaging, cfg.ACMEDir, cfg.SNIStrict)
 	if err != nil {
@@ -212,7 +215,7 @@ func main() {
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    8 << 10,
 	}
-	go func() { _ = httpSrv.Serve(&guardedListener{Listener: ln80, g: g, fe: fe}) }()
+	go func() { _ = httpSrv.Serve(newGuardedListener(ln80, g, fe)) }()
 
 	_ = os.WriteFile("/tmp/securegate.ready", []byte("ok"), 0o644)
 	slog.Info("securegate ready", "https", cfg.HTTPSAddr, "http", cfg.HTTPAddr)
@@ -236,32 +239,43 @@ func main() {
 	_ = httpsSrv.Shutdown(sctx)
 }
 
+// guardedListener feeds the port-80 http.Server: connections pass the guard (and, from proxy
+// instances, the PROXY v2 header) in their own goroutine, so a slow client never blocks Accept.
 type guardedListener struct {
-	net.Listener
-	g  *guard.Guard
-	fe *frontend.Set
+	*netx.ChanListener
 }
 
-func (l *guardedListener) Accept() (net.Conn, error) {
-	for {
-		c, err := l.Listener.Accept()
-		if err != nil {
-			return nil, err
-		}
-		if l.fe.TrustedAddr(c.RemoteAddr()) { // relayed by a proxy instance: real client IP
-			c2, ok := mux.AcceptProxied(c)
-			if !ok {
-				continue
+func newGuardedListener(ln net.Listener, g *guard.Guard, fe *frontend.Set) *guardedListener {
+	cl := netx.NewChanListener(ln.Addr())
+	go func() {
+		defer cl.Close()
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				if netx.IsTimeout(err) {
+					time.Sleep(50 * time.Millisecond)
+					continue
+				}
+				return
 			}
-			c = c2
+			go func(c net.Conn) {
+				if fe.TrustedAddr(c.RemoteAddr()) {
+					c2, ok := mux.AcceptProxied(c)
+					if !ok {
+						return
+					}
+					c = c2
+				}
+				release, ok := g.Admit(guard.IPOf(c.RemoteAddr()))
+				if !ok {
+					netx.Reset(c)
+					return
+				}
+				cl.Push(&netx.ReaderConn{Conn: c, R: c, OnClose: release})
+			}(c)
 		}
-		release, ok := l.g.Admit(guard.IPOf(c.RemoteAddr()))
-		if !ok {
-			netx.Reset(c)
-			continue
-		}
-		return &netx.ReaderConn{Conn: c, R: c, OnClose: release}, nil
-	}
+	}()
+	return &guardedListener{cl}
 }
 
 // publicIP: PUBLIC_IP env, else DNS A record of the domain, else first global interface address.
@@ -296,53 +310,4 @@ func publicIP(cfg *config.Config) net.IP {
 		}
 	}
 	return private
-}
-
-// adminBans implements `gateway bans` and `gateway unban <ip|all>` (run via docker compose exec).
-func adminBans(args []string) int {
-	dataDir := os.Getenv("DATA_DIR")
-	if dataDir == "" {
-		dataDir = "/data"
-	}
-	state := filepath.Join(dataDir, "guard", "bans.json")
-	if args[0] == "bans" {
-		now := time.Now()
-		n := 0
-		for ip, b := range guard.AdminList(state) {
-			if b.Until.After(now) {
-				fmt.Printf("%-40s until %s  (ban #%d) %s\n", ip, b.Until.Format(time.RFC3339), b.Count, b.Reason)
-				n++
-			}
-		}
-		fmt.Printf("%d active ban(s)\n", n)
-		return 0
-	}
-	if len(args) < 2 {
-		fmt.Println("usage: gateway unban <ip|all>")
-		return 2
-	}
-	n, err := guard.AdminUnban(state, args[1])
-	if err != nil {
-		fmt.Println("error:", err)
-		return 1
-	}
-	_ = syscall.Kill(1, syscall.SIGHUP) // gateway is PID 1 in the container
-	fmt.Printf("removed %d ban record(s)\n", n)
-	return 0
-}
-
-func healthcheck() int {
-	if _, err := os.Stat("/tmp/securegate.ready"); err != nil {
-		return 1
-	}
-	port := os.Getenv("HTTPS_PORT")
-	if port == "" {
-		port = "443"
-	}
-	c, err := net.DialTimeout("tcp", "127.0.0.1:"+port, 3*time.Second)
-	if err != nil {
-		return 1
-	}
-	c.Close()
-	return 0
 }

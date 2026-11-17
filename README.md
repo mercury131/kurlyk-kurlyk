@@ -51,6 +51,47 @@ VPN-клиенты выходят в интернет при включённо�
 Опционально: `cp config/users.yml.example config/users.yml` — пользователи SSTP/MTProxy и белый
 список телефонов чата в YAML (объединяется с `.env`). После изменений: `docker compose restart`.
 
+## Режим прокси (второй сервер — дополнительная точка входа)
+
+Второй сервер с этим же ПО можно поставить «перед» основным: клиенты подключаются к **домену
+прокси**, и через него работает всё — SSTP, MTProxy, чат (включая звонки), сайт.
+Прокси не расшифровывает трафик: 443/tcp, 80/tcp и 3478/udp прозрачно пересылаются на основной
+сервер с заголовком PROXY v2, поэтому основной видит реальные IP клиентов (баны и лимиты работают
+по ним), а SSTP crypto binding и FakeTLS MTProxy проходят как есть.
+
+**Сертификат Let's Encrypt для домена прокси** выпускает и продлевает основной сервер
+(TLS терминирует он): проверка Let's Encrypt приходит на IP прокси (порт 80 или 443) и
+пересылается на основной. Ничего дополнительно настраивать не нужно.
+
+1. DNS: `A`-запись домена прокси → IP прокси-сервера.
+2. На **прокси-сервере** — `git clone`, `.env` только с тремя параметрами (остальное игнорируется):
+
+   ```bash
+   PROXY=true
+   DOMAIN=proxy.example.com          # свой домен прокси
+   DOMAIN_TO_PROXY=vpn.example.com   # домен основного сервера
+   ```
+
+   `docker compose -f docker-compose.proxy.yml up -d --build` — лёгкий вариант (один контейнер ~23 МБ,
+   сборка укладывается в 512 МБ RAM; обычный `docker compose up -d --build` тоже работает, но ему
+   нужно ~2 ГБ RAM для сборки). Firewall: 80/tcp, 443/tcp, 3478/udp
+   (`PROXY_UDP=false` — не пересылать UDP STUN/TURN). В логе: `proxy: main server reachable`.
+3. На **основном сервере** в `.env` добавить домен(ы) прокси и перезапустить:
+
+   ```bash
+   PROXY_FRONTENDS=proxy.example.com          # через запятую, если прокси несколько
+   # PROXY_TRUSTED_IPS=203.0.113.7            # только если прокси выходит не с IP из своей A-записи
+   docker compose up -d
+   ```
+
+   В логе появятся `certs: certificate OK domain=proxy.example.com` и ссылки MTProxy для домена
+   прокси (`data/mtproxy-links.txt`). Заголовок PROXY принимается только с IP, в который
+   резолвится домен прокси (обновляется каждые 5 минут), поэтому подделать IP клиента нельзя.
+
+Клиентам: Keenetic — адрес сервера = домен прокси; Telegram — ссылка `tg://proxy` с доменом прокси;
+приложение чата — домен прокси (тот же `CHAT_SECRET`, пользователи и переписка общие).
+Баны действуют на основном сервере: забаненный IP отсекается и через прокси.
+
 ## SSTP (Keenetic)
 
 Пользователи — `SSTP_USERS='keenetic:пароль'` (через запятую) или `config/users.yml`.
@@ -63,6 +104,9 @@ DNS — `SSTP_DNS`. Трафик выпускается в интернет че
 `MTPROXY_USERS=имя:32hex,имя2:32hex` (секрет: `openssl rand -hex 16`) или `mtproxy_users` в YAML.
 Готовые ссылки `tg://proxy?...` печатаются в логе шлюза и сохраняются в `data/mtproxy-links.txt`.
 Работает режим FakeTLS (ee): для внешнего наблюдателя это обычный HTTPS вашего домена.
+Клиент проверяется по секрету, поэтому принимаются и ссылки с другим доменом внутри секрета
+(например, старые ссылки после смены `DOMAIN`). Каждое подключение видно в логе шлюза:
+`mtproxy: client ip=… user=… sni=…`. Без `MTPROXY_AD_TAG` telemt ходит в DC Telegram напрямую.
 
 ## Чат
 
@@ -100,7 +144,13 @@ docker compose exec gateway gateway unban all
 ```bash
 sh tests/sstp-client/run.sh <ip> <domain> <user> <password>     # SSTP end-to-end (sstpc)
 python3 tests/mtproxy_faketls_test.py <ip> <domain> <32hex>      # MTProxy FakeTLS
+python3 tests/mtproxy_e2e_test.py <ip> <domain> <32hex> [443] [dc]  # MTProxy до DC Telegram (pip install cryptography)
 sh tests/run-chat-test.sh <ip> <domain> <chat_secret>            # весь API чата
 ```
 
 Для теста без публичного домена: `TLS_MODE=selfsigned`, `PUBLIC_IP=<ip сервера>`.
+
+Режим прокси на одной тестовой машине: `sh tests/proxy-sandbox/up.sh <ip основного> <домен основного> <домен прокси>`
+поднимает экземпляр `PROXY=true` в docker-сети `sgproxy` (172.30.0.10); на основном
+`PROXY_FRONTENDS=<домен прокси>`, `PROXY_TRUSTED_IPS=172.30.0.10`. Те же тесты с `DOCKER_NET=sgproxy`
+и адресом 172.30.0.10. `ACME_DIRECTORY` — свой ACME-сервер (другой CA / тестовый Pebble).

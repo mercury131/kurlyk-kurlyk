@@ -179,20 +179,21 @@ func (s *Server) handle(c net.Conn) {
 	}
 }
 
-// AcceptProxied reads the PROXY v2 header sent by a trusted proxy instance and returns the
-// connection with the real client address. On error the connection is closed.
+// AcceptProxied handles a connection from a trusted proxy instance: with a PROXY v2 header it
+// returns the connection with the real client address; without one it is a direct client that
+// shares the proxy's public IP and is returned as is. On error the connection is closed.
 func AcceptProxied(c net.Conn) (net.Conn, bool) {
-	src, err := netx.ReadProxyV2(c, 10*time.Second)
+	c2, err := netx.MaybeProxied(c, 10*time.Second)
 	if err != nil {
-		slog.Debug("frontend: connection without valid PROXY v2 header", "from", c.RemoteAddr(), "err", err)
-		netx.Reset(c)
+		if errors.Is(err, netx.ErrProxyLocal) { // connectivity check of the proxy itself
+			_ = c.Close()
+		} else {
+			slog.Debug("frontend: bad connection from proxy address", "from", c.RemoteAddr(), "err", err)
+			netx.Reset(c)
+		}
 		return nil, false
 	}
-	if src == nil { // LOCAL: connectivity check of the proxy itself, no client behind it
-		_ = c.Close()
-		return nil, false
-	}
-	return &netx.AddrConn{Conn: c, Remote: src}, true
+	return c2, true
 }
 
 func truncate(s string, n int) string {

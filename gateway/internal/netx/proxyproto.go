@@ -57,11 +57,43 @@ func addrParts(a net.Addr) (net.IP, int) {
 	return nil, 0
 }
 
+// ErrProxyLocal: the connection carries a LOCAL PROXY v2 header (connectivity check of a proxy
+// instance itself, no client behind it).
+var ErrProxyLocal = errors.New("PROXY v2 LOCAL connection")
+
+// MaybeProxied is used for connections from a trusted proxy instance. If the connection starts
+// with a PROXY v2 header, it returns the connection with the real client address as RemoteAddr.
+// Otherwise (a direct client that shares the proxy's public IP, e.g. behind the same NAT) the
+// connection is returned unchanged (already read bytes are replayed).
+func MaybeProxied(c net.Conn, timeout time.Duration) (net.Conn, error) {
+	_ = c.SetReadDeadline(time.Now().Add(timeout))
+	defer c.SetReadDeadline(time.Time{})
+	first := make([]byte, 1)
+	if _, err := io.ReadFull(c, first); err != nil {
+		return nil, err
+	}
+	if first[0] != proxyV2Sig[0] { // TLS (0x16) / HTTP start differently from "\r\n\r\n..."
+		return &ReaderConn{Conn: c, R: io.MultiReader(bytes.NewReader(first), c)}, nil
+	}
+	src, err := readProxyV2(io.MultiReader(bytes.NewReader(first), c))
+	if err != nil {
+		return nil, err
+	}
+	if src == nil {
+		return nil, ErrProxyLocal
+	}
+	return &AddrConn{Conn: c, Remote: src}, nil
+}
+
 // ReadProxyV2 reads a PROXY v2 header from c and returns the original client address
 // (nil for a LOCAL command / unknown family: the caller keeps the socket address).
 func ReadProxyV2(c net.Conn, timeout time.Duration) (net.Addr, error) {
 	_ = c.SetReadDeadline(time.Now().Add(timeout))
 	defer c.SetReadDeadline(time.Time{})
+	return readProxyV2(c)
+}
+
+func readProxyV2(c io.Reader) (net.Addr, error) {
 	h := make([]byte, 16)
 	if _, err := io.ReadFull(c, h); err != nil {
 		return nil, err

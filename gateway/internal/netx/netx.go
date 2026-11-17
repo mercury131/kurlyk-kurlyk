@@ -18,6 +18,14 @@ type ReaderConn struct {
 
 func (c *ReaderConn) Read(p []byte) (int, error) { return c.R.Read(p) }
 
+// CloseWrite half-closes the wrapped connection when it supports it (used by Pipe).
+func (c *ReaderConn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return c.Close()
+}
+
 func (c *ReaderConn) Close() error {
 	err := c.Conn.Close()
 	c.once.Do(func() {
@@ -87,8 +95,16 @@ func Pipe(a, b net.Conn) {
 
 // Reset closes a TCP connection with RST (no FIN handshake, no lingering).
 func Reset(c net.Conn) {
-	if ac, ok := c.(*AddrConn); ok {
-		c = ac.Conn
+	for {
+		if ac, ok := c.(*AddrConn); ok {
+			c = ac.Conn
+			continue
+		}
+		if rc, ok := c.(*ReaderConn); ok {
+			c = rc.Conn
+			continue
+		}
+		break
 	}
 	if tc, ok := c.(*net.TCPConn); ok {
 		_ = tc.SetLinger(0)

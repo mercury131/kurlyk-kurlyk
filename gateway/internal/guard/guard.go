@@ -21,6 +21,7 @@ type Config struct {
 	Strikes      int
 	BanBase      time.Duration
 	Whitelist    []*net.IPNet
+	Exempt       func(ip net.IP) bool // dynamic whitelist (proxy instances), may be nil
 	NFT          bool
 	NFTPorts     []int
 	StateFile    string
@@ -89,6 +90,9 @@ func (g *Guard) exempt(ip string) bool {
 		return false
 	}
 	if p.IsLoopback() {
+		return true
+	}
+	if g.cfg.Exempt != nil && g.cfg.Exempt(p) {
 		return true
 	}
 	for _, n := range g.cfg.Whitelist {
