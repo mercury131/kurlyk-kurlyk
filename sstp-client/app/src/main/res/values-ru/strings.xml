@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SecureGate VPN</string>
+    <string name="server">Сервер (домен[:порт])</string>
+    <string name="username">Имя пользователя</string>
+    <string name="password">Пароль</string>
+    <string name="show">Показать</string>
+    <string name="hide">Скрыть</string>
+    <string name="full_tunnel">Весь трафик через VPN</string>
+    <string name="full_tunnel_hint">Выключено: только сеть VPN (192.168.x.0/24)</string>
+    <string name="auto_reconnect">Переподключаться автоматически</string>
+    <string name="trust_all">Доверять любому сертификату</string>
+    <string name="trust_all_hint">Только для теста с самоподписанным сертификатом</string>
+    <string name="connect">Подключить</string>
+    <string name="disconnect">Отключить</string>
+    <string name="log">Журнал</string>
+    <string name="copy">Копировать</string>
+    <string name="clear">Очистить</string>
+    <string name="st_connected">Подключено</string>
+    <string name="st_connecting">Подключение…</string>
+    <string name="st_reconnecting">Переподключение…</string>
+    <string name="st_error">Ошибка</string>
+    <string name="st_disconnected">Отключено</string>
+    <string name="ip_address">IP-адрес: %1$s</string>
+    <string name="dns">DNS: %1$s</string>
+    <string name="duration">Время: %1$s</string>
+    <string name="traffic">Принято %1$s · Отправлено %2$s</string>
+    <string name="err_fill_fields">Заполните сервер, имя пользователя и пароль</string>
+    <string name="err_vpn_denied">Разрешение на VPN не выдано</string>
+    <string name="err_no_profile">Нет профиля подключения: откройте приложение и заполните настройки</string>
+    <string name="channel_vpn">VPN-подключение</string>
+    <string name="notif_connecting">Подключение к %1$s…</string>
+    <string name="notif_reconnecting">Переподключение к %1$s…</string>
+    <string name="notif_connected">Подключено к %1$s · %2$s</string>
+</resources>

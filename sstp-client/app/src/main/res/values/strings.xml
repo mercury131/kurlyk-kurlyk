@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SecureGate VPN</string>
+    <string name="server">Server (domain[:port])</string>
+    <string name="username">Username</string>
+    <string name="password">Password</string>
+    <string name="show">Show</string>
+    <string name="hide">Hide</string>
+    <string name="full_tunnel">Route all traffic through VPN</string>
+    <string name="full_tunnel_hint">Off: only the VPN network (192.168.x.0/24)</string>
+    <string name="auto_reconnect">Reconnect automatically</string>
+    <string name="trust_all">Allow untrusted certificate</string>
+    <string name="trust_all_hint">Only for testing with a self-signed certificate</string>
+    <string name="connect">Connect</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="log">Log</string>
+    <string name="copy">Copy</string>
+    <string name="clear">Clear</string>
+    <string name="st_connected">Connected</string>
+    <string name="st_connecting">Connecting…</string>
+    <string name="st_reconnecting">Reconnecting…</string>
+    <string name="st_error">Error</string>
+    <string name="st_disconnected">Disconnected</string>
+    <string name="ip_address">IP address: %1$s</string>
+    <string name="dns">DNS: %1$s</string>
+    <string name="duration">Duration: %1$s</string>
+    <string name="traffic">Received %1$s · Sent %2$s</string>
+    <string name="err_fill_fields">Fill in server, username and password</string>
+    <string name="err_vpn_denied">VPN permission was not granted</string>
+    <string name="err_no_profile">No connection profile: open the app and fill in the settings</string>
+    <string name="channel_vpn">VPN connection</string>
+    <string name="notif_connecting">Connecting to %1$s…</string>
+    <string name="notif_reconnecting">Reconnecting to %1$s…</string>
+    <string name="notif_connected">Connected to %1$s · %2$s</string>
+</resources>

@@ -69,7 +69,7 @@ func main() {
 	defer cancel()
 	fe := frontend.New(cfg.ProxyFrontends, cfg.ProxyTrusted)
 	if fe.Enabled() {
-		slog.Info("frontend: proxy instances relay to this server", "domains", cfg.ProxyFrontends, "trusted_ips", len(cfg.ProxyTrusted))
+		slog.Info("frontend: proxy instances relay to this server", "domains", cfg.ProxyFrontends, "trusted_ips", fmt.Sprint(cfg.ProxyTrusted))
 		go fe.Run(ctx)
 	}
 
@@ -81,7 +81,7 @@ func main() {
 		Whitelist:    cfg.GuardWhitelist,
 		Exempt:       fe.Trusted, // a proxy instance is never banned (its clients are, by real IP)
 		NFT:          cfg.GuardNFT,
-		NFTPorts:     []int{80, cfg.HTTPSPort, cfg.TURNUDPPort},
+		NFTPorts:     append([]int{80, cfg.TURNUDPPort}, cfg.ProxyTCPPorts()...),
 		StateFile:    filepath.Join(cfg.DataDir, "guard", "bans.json"),
 	})
 	defer g.Close()
@@ -93,25 +93,57 @@ func main() {
 	}
 	go cm.RunRenewal(ctx)
 
-	// MTProxy (telemt) integration
+	// MTProxy: telemt on :443 + alternative implementations on their own ports, same users
 	var mt *mtproxy.Forwarder
 	if err := mtproxy.WriteTelemtConfig(cfg.MTConfigDir, cfg.MTEnable, cfg.Domain, cfg.HTTPSPort,
 		cfg.MTInternalPort, cfg.HTTPSPort, cfg.MTAdTag, cfg.MTUsers); err != nil {
 		slog.Error("mtproxy: cannot write telemt config", "err", err)
 	}
+	type altPort struct {
+		impl config.MTAltImpl
+		fw   *mtproxy.Forwarder
+	}
+	var alts []altPort
+	for _, a := range cfg.MTAlt {
+		on := cfg.MTEnable && a.Active()
+		dir := filepath.Join(cfg.MTConfigDir, a.Name)
+		var err error
+		switch a.Name {
+		case "mtprotoproxy":
+			err = mtproxy.WriteMTProtoProxyConfig(dir, on, cfg.Domain, a.InternalPort, cfg.HTTPSPort, cfg.MTAdTag, cfg.MTUsers)
+		case "teleproxy":
+			err = mtproxy.WriteTeleproxyArgs(dir, on, cfg.Hosts(), a.InternalPort, cfg.HTTPSPort, cfg.MTAdTag, cfg.MTUsers)
+		}
+		if err != nil {
+			slog.Error("mtproxy: cannot write config", "impl", a.Name, "err", err)
+		}
+		if on && len(cfg.MTUsers) > 0 {
+			alts = append(alts, altPort{a, mtproxy.NewForwarder(cfg.MTSecretBytes(), a.InternalPort)})
+		}
+	}
 	if cfg.MTEnable && len(cfg.MTUsers) > 0 {
 		mt = mtproxy.NewForwarder(cfg.MTSecretBytes(), cfg.MTInternalPort)
+		type implPort struct {
+			name string
+			port int
+		}
+		impls := []implPort{{"telemt", cfg.HTTPSPort}}
+		for _, a := range alts {
+			impls = append(impls, implPort{a.impl.Name, a.impl.Port})
+		}
 		var sb strings.Builder
-		for _, host := range cfg.Hosts() { // links for DOMAIN and for every proxy instance
-			links := mtproxy.Links(host, cfg.HTTPSPort, cfg.MTUsers)
-			names := make([]string, 0, len(links))
-			for n := range links {
-				names = append(names, n)
-			}
-			sort.Strings(names)
-			for _, n := range names {
-				slog.Info("mtproxy: link", "user", n, "host", host, "url", links[n])
-				fmt.Fprintf(&sb, "%s (%s): %s\n", n, host, links[n])
+		for _, im := range impls {
+			for _, host := range cfg.Hosts() { // links for DOMAIN and for every proxy instance
+				links := mtproxy.Links(host, im.port, cfg.MTUsers)
+				names := make([]string, 0, len(links))
+				for n := range links {
+					names = append(names, n)
+				}
+				sort.Strings(names)
+				for _, n := range names {
+					slog.Info("mtproxy: link", "impl", im.name, "user", n, "host", host, "url", links[n])
+					fmt.Fprintf(&sb, "%s [%s] (%s:%d): %s\n", n, im.name, host, im.port, links[n])
+				}
 			}
 		}
 		_ = os.WriteFile(filepath.Join(cfg.DataDir, "mtproxy-links.txt"), []byte(sb.String()), 0o600)
@@ -201,6 +233,26 @@ func main() {
 	}
 	go func() { _ = m.Serve(ln443) }()
 
+	// alternative MTProxy ports: the same detector as :443 (website/SSTP/chat for everyone else,
+	// guard, PROXY v2 from proxy instances), Telegram clients go to that implementation
+	var altLns []net.Listener
+	for _, a := range alts {
+		ln, err := net.Listen("tcp", ":"+strconv.Itoa(a.impl.Port))
+		if err != nil {
+			slog.Error("mtproxy: cannot listen, implementation not reachable", "impl", a.impl.Name, "port", a.impl.Port, "err", err)
+			continue
+		}
+		altLns = append(altLns, ln)
+		ma := *m
+		ma.MT = a.fw
+		ma.Label = a.impl.Name
+		if a.impl.Name == "teleproxy" { // accepts only the SNI domains it was started with
+			ma.MTKnownSNIOnly, ma.MTFallback = true, mt
+		}
+		go func() { _ = ma.Serve(ln) }()
+		slog.Info("mtproxy: alternative implementation", "impl", a.impl.Name, "port", a.impl.Port, "internal", a.impl.InternalPort)
+	}
+
 	// HTTP :80 -> ACME + redirect
 	ln80, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
@@ -233,6 +285,9 @@ func main() {
 	cancel()
 	ln443.Close()
 	ln80.Close()
+	for _, ln := range altLns {
+		ln.Close()
+	}
 	sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer scancel()
 	_ = httpSrv.Shutdown(sctx)

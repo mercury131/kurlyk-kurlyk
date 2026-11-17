@@ -117,6 +117,9 @@ async def main():
     check(st == 200 and {A, B, C} <= phones, "user directory lists all users")
     st, cfg = api("GET", "/config", ta)
     check(st == 200 and cfg["ice_servers"], "config with ICE servers: %s" % json.dumps(cfg["ice_servers"])[:160])
+    urls = [u for e in cfg["ice_servers"] for u in e["urls"]]
+    check(cfg["ws_url"] == f"wss://{DOMAIN}/chat/ws" and urls and all((":" + DOMAIN + ":") in u for u in urls),
+          "ws_url and TURN urls point to the domain used by the client (%s)" % cfg["ws_url"])
     st, _ = api("GET", "/users", "badtoken")
     check(st == 401, "bad token rejected")
 

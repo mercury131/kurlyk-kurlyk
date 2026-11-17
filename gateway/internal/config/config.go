@@ -20,6 +20,14 @@ type SSTPUser struct {
 	Password string `yaml:"password"`
 }
 
+// MTAltImpl is an alternative MTProxy implementation (mtprotoproxy / teleproxy).
+type MTAltImpl struct {
+	Name         string // "mtprotoproxy" | "teleproxy" (= container and data/mtproxy/<name>/)
+	Enable       bool
+	Port         int // public port (0 = disabled)
+	InternalPort int // 127.0.0.1 port of the implementation
+}
+
 type Config struct {
 	Domain      string
 	ACMEEmail   string
@@ -49,6 +57,10 @@ type Config struct {
 	MTInternalPort int
 	MTConfigDir    string
 	MTAdTag        string
+	// Alternative MTProxy implementations on their own public ports, same users (MTUsers).
+	// Port 0 = disabled. The gateway listens on the public port (same detector as :443) and
+	// forwards authenticated Telegram clients to 127.0.0.1:<internal port>.
+	MTAlt []MTAltImpl
 
 	ChatEnable        bool
 	ChatSecret        string
@@ -78,6 +90,9 @@ type Config struct {
 	ProxyMode     bool
 	ProxyUpstream string // host (or host:port of the upstream HTTPS port)
 	ProxyUDP      bool
+	// WireGuard UDP port (main server: wireguard container; proxy: relayed to the main server)
+	WGEnable bool
+	WGPort   int
 	// Main server side: proxy instances relaying to us.
 	ProxyFrontends []string     // their domains (certificate + SNI + Host, IPs trusted)
 	ProxyTrusted   []*net.IPNet // extra trusted source addresses (PROXY_TRUSTED_IPS)
@@ -86,6 +101,21 @@ type Config struct {
 // Hosts returns all host names served by this server: DOMAIN and the proxy frontend domains.
 func (c *Config) Hosts() []string {
 	return append([]string{c.Domain}, c.ProxyFrontends...)
+}
+
+// cidrOf parses "1.2.3.4", "2001:db8::1" or "10.0.0.0/24"; nil if w is not an address.
+func cidrOf(w string) *net.IPNet {
+	if ip := net.ParseIP(w); ip != nil {
+		bits := 32
+		if ip.To4() == nil {
+			bits = 128
+		}
+		return &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}
+	}
+	if _, n, err := net.ParseCIDR(w); err == nil {
+		return n
+	}
+	return nil
 }
 
 func parseCIDRs(key string) ([]*net.IPNet, error) {
@@ -185,6 +215,14 @@ func Load() (*Config, error) {
 		MTInternalPort: envInt("MTPROXY_INTERNAL_PORT", 8443),
 		MTConfigDir:    env("MTPROXY_CONFIG_DIR", "/data/mtproxy"),
 		MTAdTag:        env("MTPROXY_AD_TAG", ""),
+		MTAlt: []MTAltImpl{
+			{Name: "mtprotoproxy", Enable: envBool("MTPROTOPROXY_ENABLE", true),
+				Port: envInt("MTPROTOPROXY_PORT", 2053), InternalPort: envInt("MTPROTOPROXY_INTERNAL_PORT", 8444)},
+			{Name: "teleproxy", Enable: envBool("TELEPROXY_ENABLE", true),
+				Port: envInt("TELEPROXY_PORT", 2083), InternalPort: envInt("TELEPROXY_INTERNAL_PORT", 8445)},
+		},
+		WGEnable: envBool("WG_ENABLE", true),
+		WGPort:   envInt("WG_PORT", 51820),
 
 		ChatEnable:     envBool("CHAT_ENABLE", true),
 		ChatSecret:     env("CHAT_SECRET", ""),
@@ -229,14 +267,23 @@ func Load() (*Config, error) {
 		c.ProxyUDP = envBool("PROXY_UDP", true)
 		return c, nil
 	}
-	for _, d := range splitList(os.Getenv("PROXY_FRONTENDS")) {
-		d = strings.ToLower(strings.TrimSuffix(d, "."))
-		if d != c.Domain {
-			c.ProxyFrontends = append(c.ProxyFrontends, d)
-		}
-	}
 	if c.ProxyTrusted, err = parseCIDRs("PROXY_TRUSTED_IPS"); err != nil {
 		return nil, err
+	}
+	// PROXY_FRONTENDS: domains of the proxy instances (several allowed, comma separated).
+	// An IP/CIDR in this list is treated like PROXY_TRUSTED_IPS (proxy without a domain).
+	seen := map[string]bool{c.Domain: true}
+	for _, d := range splitList(os.Getenv("PROXY_FRONTENDS")) {
+		d = strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(d, "https://"), "http://"), "."))
+		if n := cidrOf(d); n != nil {
+			c.ProxyTrusted = append(c.ProxyTrusted, n)
+			continue
+		}
+		if seen[d] {
+			continue
+		}
+		seen[d] = true
+		c.ProxyFrontends = append(c.ProxyFrontends, d)
 	}
 
 	if c.Domain == "" {
@@ -318,7 +365,33 @@ func Load() (*Config, error) {
 	if c.TURNMinPort <= 0 || c.TURNMaxPort < c.TURNMinPort {
 		return nil, fmt.Errorf("invalid TURN port range")
 	}
+	ports := map[int]string{c.HTTPSPort: "HTTPS_PORT", 80: "HTTP_PORT", c.MTInternalPort: "MTPROXY_INTERNAL_PORT"}
+	for _, a := range c.MTAlt {
+		if !a.Active() {
+			continue
+		}
+		for _, p := range []int{a.Port, a.InternalPort} {
+			if prev, dup := ports[p]; dup {
+				return nil, fmt.Errorf("%s: port %d is already used by %s", a.Name, p, prev)
+			}
+			ports[p] = a.Name
+		}
+	}
 	return c, nil
+}
+
+// Active reports whether the alternative implementation is switched on.
+func (a MTAltImpl) Active() bool { return a.Enable && a.Port > 0 && a.InternalPort > 0 }
+
+// ProxyTCPPorts: TCP ports a proxy instance relays to the main server (besides 80).
+func (c *Config) ProxyTCPPorts() []int {
+	out := []int{c.HTTPSPort}
+	for _, a := range c.MTAlt {
+		if a.Enable && a.Port > 0 && a.Port != c.HTTPSPort && a.Port != 80 {
+			out = append(out, a.Port)
+		}
+	}
+	return out
 }
 
 // MTSecretBytes returns decoded MTProxy secrets.

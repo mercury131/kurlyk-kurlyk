@@ -5,7 +5,7 @@ set -e
 IP=${1:?server ip}; DOMAIN=${2:?domain}; USER=${3:?user}; PASS=${4:?password}
 cd "$(dirname "$0")"
 docker build -q -t securegate-sstp-test . >/dev/null
-docker run --rm --privileged --add-host "$DOMAIN:$IP" -e U="$USER" -e P="$PASS" -e D="$DOMAIN" securegate-sstp-test sh -c '
+docker run --rm --privileged ${DOCKER_NET:+--network $DOCKER_NET} --add-host "$DOMAIN:$IP" -e U="$USER" -e P="$PASS" -e D="$DOMAIN" securegate-sstp-test sh -c '
   sstpc --cert-warn --tls-ext --log-stderr --log-level 2 --user "$U" --password "$P" "$D" \
      require-mschap-v2 noauth noipdefault nodefaultroute nodetach logfd 2 &
   for i in $(seq 1 20); do ip -4 addr show ppp0 2>/dev/null | grep -q inet && break; sleep 1; done

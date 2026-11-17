@@ -13,8 +13,8 @@ services:
       dockerfile: Dockerfile.proxy
     image: securegate-proxy:local
     container_name: securegate-proxy
-    # host network: listens on 80/tcp, 443/tcp and the TURN UDP port (3478) of the server,
-    # sees real client IPs
+    # host network: listens on 80/tcp, 443/tcp, the alternative MTProxy ports (2053, 2083/tcp),
+    # the TURN UDP port (3478) and WireGuard (51820/udp) of the server, sees real client IPs
     network_mode: host
     # optional kernel-level bans (nftables); without it bans are applied in-process
     cap_add:

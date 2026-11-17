@@ -37,6 +37,11 @@ type Server struct {
 	SSTP      *sstp.Server       // nil if disabled
 	TURN      *turnsrv.Server    // nil if disabled
 	HTTP      *netx.ChanListener
+	Label     string // listener name for logs ("" = main :443)
+	// MTKnownSNIOnly: the implementation behind MT only serves our own domains (teleproxy);
+	// clients whose link holds another domain go to MTFallback (telemt accepts any SNI).
+	MTKnownSNIOnly bool
+	MTFallback     *mtproxy.Forwarder
 }
 
 // Serve accepts connections on ln until it is closed.
@@ -99,7 +104,7 @@ func (s *Server) handle(c net.Conn) {
 	}
 	if hdr[0] != 0x16 || hdr[1] != 0x03 {
 		slog.Debug("mux: non-TLS traffic", "ip", ip, "head", hdr)
-		s.Guard.Strike(ip, 3, "non-TLS traffic on 443")
+		s.Guard.Strike(ip, 3, "non-TLS traffic on TLS port "+s.Label)
 		netx.Reset(c)
 		return
 	}
@@ -121,8 +126,15 @@ func (s *Server) handle(c net.Conn) {
 	if s.MT != nil {
 		if user, ok := s.MT.Match(rec); ok {
 			_ = c.SetReadDeadline(time.Time{})
-			slog.Info("mtproxy: client", "ip", ip, "user", user, "sni", parseSNI(rec[5:]))
-			s.MT.Forward(c, rec)
+			impl, fw, sni := s.Label, s.MT, parseSNI(rec[5:])
+			if impl == "" {
+				impl = "telemt"
+			}
+			if s.MTKnownSNIOnly && s.MTFallback != nil && (sni == "" || !s.Serves(sni)) {
+				impl, fw = "telemt (foreign SNI on "+s.Label+" port)", s.MTFallback
+			}
+			slog.Info("mtproxy: client", "impl", impl, "ip", ip, "user", user, "sni", sni)
+			fw.Forward(c, rec)
 			return
 		}
 	}

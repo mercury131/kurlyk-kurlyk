@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# sgctl - securegate admin tool (run on the server, in the repository folder).
+#
+#   ./sgctl wg add <name> [--via <host>]    add a WireGuard client, show its config + QR code
+#   ./sgctl wg show <name> [--via <host>]   show config + QR code again
+#   ./sgctl wg conf <name> [--via <host>]   print only the config (> name.conf)
+#   ./sgctl wg list                         clients, addresses, last handshake, traffic
+#   ./sgctl wg remove <name>                delete a client
+#   ./sgctl mtproxy [user]                  MTProxy links (all implementations / domains)
+#   ./sgctl mtproxy qr <user> [impl] [host] QR code of a tg:// link
+#   ./sgctl bans | unban <ip|all>           protection: list / remove bans
+#   ./sgctl status                          containers and ports
+#
+# --via <host>: endpoint in the WireGuard config. Default is DOMAIN; use the domain of a proxy
+# instance (PROXY_FRONTENDS) to give the client a config that connects through that proxy.
+set -euo pipefail
+cd "$(dirname "$(readlink -f "$0")")"
+
+usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; }
+
+env_val() { # value of KEY from .env (last assignment wins, quotes stripped)
+  [ -f .env ] || return 0
+  grep -E "^[[:space:]]*$1=" .env | tail -n1 | cut -d= -f2- | sed -e "s/^['\"]//" -e "s/['\"][[:space:]]*$//"
+}
+is_proxy() { case "$(env_val PROXY | tr 'A-Z' 'a-z')" in 1|true|yes|on) return 0;; esac; return 1; }
+
+compose() {
+  if [ -f docker-compose.proxy.yml ] && docker ps --format '{{.Names}}' | grep -qx securegate-proxy; then
+    docker compose -f docker-compose.proxy.yml "$@"
+  else
+    docker compose "$@"
+  fi
+}
+tty_flag() { if [ -t 0 ] && [ -t 1 ]; then echo ""; else echo "-T"; fi; }
+
+need_main() {
+  if is_proxy; then
+    echo "This server runs in PROXY mode: WireGuard clients are created on the MAIN server ($(env_val DOMAIN_TO_PROXY))."
+    echo "There:  ./sgctl wg add <name> --via $(env_val DOMAIN)     (config that connects through this proxy)"
+    exit 1
+  fi
+  if ! docker ps --format '{{.Names}}' | grep -qx securegate-wireguard; then
+    echo "The wireguard container is not running:  docker compose up -d --build   (logs: docker compose logs wireguard)"
+    exit 1
+  fi
+}
+
+cmd=${1:-help}; [ $# -gt 0 ] && shift
+case "$cmd" in
+  wg|wireguard)
+    need_main
+    # shellcheck disable=SC2046
+    exec docker compose exec $(tty_flag) wireguard wgctl "$@"
+    ;;
+  mtproxy|mt)
+    f=data/mtproxy-links.txt
+    [ -f "$f" ] || { echo "no links yet ($f) - is MTProxy enabled and the gateway running?"; exit 1; }
+    if [ "${1:-}" = qr ]; then
+      user=${2:?usage: ./sgctl mtproxy qr <user> [impl] [host]}; impl=${3:-telemt}; host=${4:-}
+      line=$(grep -E "^$user \[$impl\] \(${host:-[^:]+}:" "$f" | head -n1 || true)
+      [ -n "$line" ] || { echo "no link for user=$user impl=$impl ${host:+host=$host}"; exit 1; }
+      url=${line##*: }
+      echo "$line"
+      if docker ps --format '{{.Names}}' | grep -qx securegate-wireguard; then
+        docker exec securegate-wireguard qrencode -t ansiutf8 -m 2 "$url"
+      elif command -v qrencode >/dev/null; then
+        qrencode -t ansiutf8 -m 2 "$url"
+      else
+        echo "(install qrencode for a QR code: apt install qrencode)"
+      fi
+    elif [ -n "${1:-}" ]; then
+      grep -E "^$1 " "$f" || { echo "no links for user $1"; exit 1; }
+    else
+      cat "$f"
+    fi
+    ;;
+  bans)
+    if is_proxy; then compose exec -T proxy sgproxy bans 2>/dev/null || compose exec -T gateway gateway bans
+    else compose exec -T gateway gateway bans; fi
+    ;;
+  unban)
+    ip=${1:?usage: ./sgctl unban <ip|all>}
+    if is_proxy; then compose exec -T proxy sgproxy unban "$ip" 2>/dev/null || compose exec -T gateway gateway unban "$ip"
+    else compose exec -T gateway gateway unban "$ip"; fi
+    ;;
+  status)
+    docker ps -a --filter name=securegate --format 'table {{.Names}}\t{{.Status}}'
+    echo
+    ss -lntup 2>/dev/null | grep -E 'gateway|sgproxy|telemt|python|teleproxy|:(80|443|3478|51820|2053|2083) ' || true
+    ip -br link show "$(env_val WG_INTERFACE || true)" 2>/dev/null || ip -br link show sgwg0 2>/dev/null || true
+    ;;
+  help|-h|--help) usage ;;
+  *) usage; exit 2 ;;
+esac

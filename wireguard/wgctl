@@ -1,0 +1,126 @@
+#!/bin/sh
+# wgctl - WireGuard client management inside the securegate wireguard container.
+# On the host use ./sgctl wg ... (it runs this script via docker compose exec).
+#   wgctl add <name> [--via <host>]    new client, prints its config + QR code
+#   wgctl show <name> [--via <host>]   config + QR code again   (alias: qr)
+#   wgctl conf <name> [--via <host>]   config only (for a .conf file)
+#   wgctl list                         clients, addresses, last handshake, traffic
+#   wgctl remove <name>                delete a client (disconnects it immediately)
+# --via: endpoint host in the config - DOMAIN by default (WG_ENDPOINT overrides); give the domain
+#        (or IP) of a proxy instance to connect through that proxy.
+set -e
+. /usr/local/bin/wg-common.sh
+umask 077
+
+die() { echo "error: $*" >&2; exit 1; }
+
+usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; }
+
+cmd=${1:-help}; [ $# -gt 0 ] && shift
+case "$cmd" in help|-h|--help) usage; exit 0 ;; esac
+[ -s "$WGDIR/server/public.key" ] || die "WireGuard is not initialised (WG_ENABLE=false, PROXY=true or the container is still starting) - see: docker compose logs wireguard"
+
+NAME=""; VIA=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --via|-v) VIA=${2:?--via needs a host}; shift 2 ;;
+    --via=*) VIA=${1#--via=}; shift ;;
+    -*) die "unknown option $1" ;;
+    *) if [ -z "$NAME" ]; then NAME=$1; else die "unexpected argument $1"; fi; shift ;;
+  esac
+done
+
+valid_name() {
+  echo "$1" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$' || die "name must be 1-32 chars: letters, digits, . _ - (got: $1)"
+}
+need() {
+  [ -n "$NAME" ] || die "client name required"
+  valid_name "$NAME"
+  [ -d "$WGDIR/clients/$NAME" ] || die "no client named $NAME (see: wgctl list)"
+}
+hosts() { echo "$DOMAIN $(echo "$PROXY_FRONTENDS" | tr ',;' '  ')"; }
+
+endpoint() {
+  if [ -n "$VIA" ]; then
+    ok=0
+    for h in $(hosts) $WG_ENDPOINT; do [ "$h" = "$VIA" ] && ok=1; done
+    [ $ok = 1 ] || echo "note: $VIA is neither DOMAIN nor one of PROXY_FRONTENDS" >&2
+    echo "$VIA"
+  else
+    echo "${WG_ENDPOINT:-$DOMAIN}"
+  fi
+}
+
+print_client() {
+  host=$(endpoint)
+  conf=$(client_conf "$NAME" "$host")
+  echo "=== WireGuard client: $NAME ($(cat "$WGDIR/clients/$NAME/address")) via $host:$WG_PORT ==="
+  echo "$conf"
+  echo
+  echo "Scan in the WireGuard app:  +  ->  Scan from QR code"
+  echo "$conf" | qrencode -t ansiutf8 -m 2
+  others=""
+  for h in $(hosts); do [ "$h" = "$host" ] || others="$others $h"; done
+  [ -n "$others" ] && echo "Other entry points:$others   ->  ./sgctl wg show $NAME --via <host>"
+  echo "Config file: data/wireguard/clients/$NAME/$NAME.conf"
+}
+
+case "$cmd" in
+  add)
+    [ -n "$NAME" ] || die "usage: wgctl add <name> [--via <host>]"
+    valid_name "$NAME"
+    [ -e "$WGDIR/clients/$NAME" ] && die "client $NAME already exists (wgctl show $NAME)"
+    used=" $SERVER_IP "
+    for f in "$WGDIR"/clients/*/address; do [ -f "$f" ] && used="$used$(cat "$f") "; done
+    i=$(( $(ip2int "$SERVER_IP") + 1 )); addr=""
+    while [ $i -le $LAST_INT ]; do
+      a=$(int2ip $i)
+      case "$used" in *" $a "*) ;; *) addr=$a; break ;; esac
+      i=$((i+1))
+    done
+    [ -n "$addr" ] || die "no free addresses left in $SUBNET"
+    d="$WGDIR/clients/$NAME"
+    rm -rf "$d.tmp"; mkdir -p "$d.tmp"
+    wg genkey > "$d.tmp/private.key"
+    wg pubkey < "$d.tmp/private.key" > "$d.tmp/public.key"
+    wg genpsk > "$d.tmp/psk"
+    echo "$addr" > "$d.tmp/address"
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$d.tmp/created"
+    mv "$d.tmp" "$d"
+    apply_peer "$NAME"
+    client_conf "$NAME" "$(endpoint)" > "$d/$NAME.conf"
+    echo "client $NAME added: $addr"
+    print_client
+    ;;
+  show|qr)
+    need; print_client ;;
+  conf)
+    need; client_conf "$NAME" "$(endpoint)" ;;
+  remove|rm|del)
+    need
+    d="$WGDIR/clients/$NAME"
+    if ip link show "$IFACE" >/dev/null 2>&1; then wg set "$IFACE" peer "$(cat "$d/public.key")" remove; fi
+    rm -rf "$d"
+    echo "client $NAME removed"
+    ;;
+  list|ls)
+    dump=$(wg show "$IFACE" dump 2>/dev/null | tail -n +2 || true)
+    now=$(date +%s)
+    printf "%-20s %-15s %-24s %-12s %s\n" NAME ADDRESS ENDPOINT HANDSHAKE "RX / TX"
+    n=0
+    for d in "$WGDIR"/clients/*/; do
+      [ -f "$d/public.key" ] || continue
+      name=$(basename "$d"); pub=$(cat "$d/public.key")
+      line=$(echo "$dump" | awk -v k="$pub" '$1==k')
+      ep=$(echo "$line" | awk '{print $3}'); hs=$(echo "$line" | awk '{print $5}')
+      rx=$(echo "$line" | awk '{printf "%.1f MB", $6/1048576}'); tx=$(echo "$line" | awk '{printf "%.1f MB", $7/1048576}')
+      if [ -z "$hs" ] || [ "$hs" = 0 ]; then ago="never"; else ago="$((now - hs))s ago"; fi
+      [ "$ep" = "(none)" ] && ep=""
+      printf "%-20s %-15s %-24s %-12s %s\n" "$name" "$(cat "$d/address")" "${ep:--}" "$ago" "${rx:-0 MB} / ${tx:-0 MB}"
+      n=$((n+1))
+    done
+    echo "$n client(s); server $SERVER_IP, $SUBNET, port $WG_PORT/udp, interface $IFACE"
+    ;;
+  *)
+    usage; exit 2 ;;
+esac

@@ -8,6 +8,10 @@
 //	:443/tcp -> DOMAIN_TO_PROXY:443  (PROXY v2 header with the real client address)
 //	:80/tcp  -> DOMAIN_TO_PROXY:80   (Let's Encrypt HTTP-01 for this proxy's domain + redirect)
 //	:TURN_UDP_PORT/udp -> DOMAIN_TO_PROXY:TURN_UDP_PORT (STUN/TURN for calls)
+//	:MTPROTOPROXY_PORT, :TELEPROXY_PORT/tcp -> same ports of the main server (alternative MTProxy
+//	                    implementations; PROXY v2 header like :443)
+//	:WG_PORT/udp       -> DOMAIN_TO_PROXY:WG_PORT (WireGuard; the main server sees the proxy as
+//	                    the peer endpoint - WireGuard authenticates by keys, roaming is built in)
 //
 // The main server lists this proxy's domain in PROXY_FRONTENDS: it then trusts the PROXY header
 // from the proxy's IP, accepts the domain as SNI/Host and obtains a Let's Encrypt certificate for
@@ -43,7 +47,11 @@ func Run(cfg *config.Config) {
 		"domain", cfg.Domain, "upstream", cfg.ProxyUpstream, "udp", cfg.ProxyUDP)
 	_ = os.MkdirAll(cfg.DataDir, 0o700)
 	// the telemt container is not needed on a proxy: let it idle
-	_ = mtproxy.WriteDisabled(cfg.MTConfigDir, "proxy mode (PROXY=true): MTProxy runs on the main server "+cfg.ProxyUpstream)
+	reason := "proxy mode (PROXY=true): MTProxy runs on the main server " + cfg.ProxyUpstream
+	_ = mtproxy.WriteDisabled(cfg.MTConfigDir, reason)
+	for _, a := range cfg.MTAlt {
+		_ = mtproxy.WriteDisabled(filepath.Join(cfg.MTConfigDir, a.Name), reason)
+	}
 
 	g := guard.New(guard.Config{
 		MaxConnPerIP: cfg.GuardMaxConnPerIP,
@@ -52,37 +60,51 @@ func Run(cfg *config.Config) {
 		BanBase:      cfg.GuardBan,
 		Whitelist:    cfg.GuardWhitelist,
 		NFT:          cfg.GuardNFT,
-		NFTPorts:     []int{80, cfg.HTTPSPort, cfg.TURNUDPPort},
+		NFTPorts:     append([]int{80, cfg.TURNUDPPort}, cfg.ProxyTCPPorts()...),
 		StateFile:    filepath.Join(cfg.DataDir, "guard", "bans.json"),
 	})
 	defer g.Close()
 
 	r443 := &tcpRelay{name: "https", guard: g, upstream: net.JoinHostPort(upHost, upPort)}
 	r80 := &tcpRelay{name: "http", guard: g, upstream: net.JoinHostPort(upHost, "80")}
-	ln443, err := net.Listen("tcp", cfg.HTTPSAddr)
-	if err != nil {
-		slog.Error("listen", "addr", cfg.HTTPSAddr, "err", err)
-		os.Exit(1)
+	var lns []net.Listener
+	listen := func(r *tcpRelay, addr string, fatal bool) {
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			slog.Error("listen", "addr", addr, "err", err)
+			if fatal {
+				os.Exit(1)
+			}
+			return
+		}
+		lns = append(lns, ln)
+		go r.serve(ln)
 	}
-	ln80, err := net.Listen("tcp", cfg.HTTPAddr)
-	if err != nil {
-		slog.Error("listen", "addr", cfg.HTTPAddr, "err", err)
-		os.Exit(1)
+	listen(r443, cfg.HTTPSAddr, true)
+	listen(r80, cfg.HTTPAddr, true)
+	for _, p := range cfg.ProxyTCPPorts()[1:] { // alternative MTProxy ports
+		ps := strconv.Itoa(p)
+		listen(&tcpRelay{name: "tcp/" + ps, guard: g, upstream: net.JoinHostPort(upHost, ps)}, ":"+ps, false)
 	}
-	go r443.serve(ln443)
-	go r80.serve(ln80)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	udpPorts := []int{}
 	if cfg.ProxyUDP {
-		u := &udpRelay{guard: g, upstream: net.JoinHostPort(upHost, strconv.Itoa(cfg.TURNUDPPort))}
-		pc, err := net.ListenUDP("udp", &net.UDPAddr{Port: cfg.TURNUDPPort})
+		udpPorts = append(udpPorts, cfg.TURNUDPPort)
+	}
+	if cfg.WGEnable && cfg.WGPort > 0 && cfg.WGPort != cfg.TURNUDPPort {
+		udpPorts = append(udpPorts, cfg.WGPort)
+	}
+	for _, p := range udpPorts {
+		u := &udpRelay{guard: g, upstream: net.JoinHostPort(upHost, strconv.Itoa(p))}
+		pc, err := net.ListenUDP("udp", &net.UDPAddr{Port: p})
 		if err != nil {
-			slog.Error("proxy: UDP listen failed, TURN UDP not relayed", "port", cfg.TURNUDPPort, "err", err)
-		} else {
-			go u.serve(ctx, pc)
-			defer pc.Close()
+			slog.Error("proxy: UDP listen failed, port not relayed", "port", p, "err", err)
+			continue
 		}
+		go u.serve(ctx, pc)
+		defer pc.Close()
 	}
 
 	go func() { // connectivity check of the upstream, so misconfiguration is visible in the log
@@ -105,7 +127,7 @@ func Run(cfg *config.Config) {
 	}()
 
 	_ = os.WriteFile("/tmp/securegate.ready", []byte("ok"), 0o644)
-	slog.Info("securegate proxy ready", "https", cfg.HTTPSAddr, "http", cfg.HTTPAddr,
+	slog.Info("securegate proxy ready", "tcp", cfg.ProxyTCPPorts(), "udp", udpPorts,
 		"hint", "on the MAIN server add this proxy's domain to PROXY_FRONTENDS")
 
 	sig := make(chan os.Signal, 1)
@@ -118,8 +140,9 @@ func Run(cfg *config.Config) {
 		break
 	}
 	slog.Info("shutting down")
-	ln443.Close()
-	ln80.Close()
+	for _, ln := range lns {
+		ln.Close()
+	}
 }
 
 type tcpRelay struct {

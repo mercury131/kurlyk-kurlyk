@@ -7,6 +7,7 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -16,11 +17,12 @@ type Set struct {
 	domains []string     // lower-case frontend domains
 	static  []*net.IPNet // PROXY_TRUSTED_IPS
 	mu      sync.RWMutex
-	ips     map[string]bool // resolved A/AAAA of domains
+	ips     map[string]bool     // resolved A/AAAA of all domains (lookup set)
+	byDom   map[string][]string // domain -> its last successfully resolved addresses
 }
 
 func New(domains []string, static []*net.IPNet) *Set {
-	s := &Set{static: static, ips: map[string]bool{}}
+	s := &Set{static: static, ips: map[string]bool{}, byDom: map[string][]string{}}
 	for _, d := range domains {
 		if d = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(d), ".")); d != "" {
 			s.domains = append(s.domains, d)
@@ -85,38 +87,44 @@ func (s *Set) Run(ctx context.Context) {
 }
 
 func (s *Set) resolve() {
-	ips := map[string]bool{}
+	s.mu.RLock()
+	byDom := make(map[string][]string, len(s.domains))
+	for d, v := range s.byDom {
+		byDom[d] = v
+	}
+	s.mu.RUnlock()
+	changed := false
 	for _, d := range s.domains {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		addrs, err := net.DefaultResolver.LookupIPAddr(ctx, d)
 		cancel()
-		if err != nil {
-			slog.Warn("frontend: cannot resolve proxy domain (keeping previous addresses)", "domain", d, "err", err)
-			s.mu.RLock()
-			for ip := range s.ips {
-				ips[ip] = true
-			}
-			s.mu.RUnlock()
+		if err != nil || len(addrs) == 0 {
+			// keep this domain's previous addresses; other proxies are not affected
+			slog.Warn("frontend: cannot resolve proxy domain (keeping its previous addresses)", "domain", d, "err", err, "kept", byDom[d])
 			continue
 		}
+		list := make([]string, 0, len(addrs))
 		for _, a := range addrs {
-			ips[a.IP.String()] = true
+			list = append(list, a.IP.String())
+		}
+		sort.Strings(list)
+		if strings.Join(list, ",") != strings.Join(byDom[d], ",") {
+			changed = true
+			slog.Info("frontend: proxy domain resolved", "domain", d, "ips", list)
+		}
+		byDom[d] = list
+	}
+	ips := map[string]bool{}
+	for _, list := range byDom {
+		for _, ip := range list {
+			ips[ip] = true
 		}
 	}
 	s.mu.Lock()
-	changed := len(ips) != len(s.ips)
-	for ip := range ips {
-		if !s.ips[ip] {
-			changed = true
-		}
-	}
+	s.byDom = byDom
 	s.ips = ips
 	s.mu.Unlock()
 	if changed {
-		list := make([]string, 0, len(ips))
-		for ip := range ips {
-			list = append(list, ip)
-		}
-		slog.Info("frontend: trusted proxy addresses", "domains", s.domains, "ips", list)
+		slog.Info("frontend: trusted proxy addresses", "count", len(ips)+len(s.static))
 	}
 }
