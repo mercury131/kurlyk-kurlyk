@@ -25,6 +25,7 @@ type Config struct {
 	ACMEEmail   string
 	TLSMode     string // auto | letsencrypt | selfsigned
 	ACMEStaging bool
+	ACMEDir     string // custom ACME directory URL (other CA / test CA)
 	HTTPAddr    string
 	HTTPSAddr   string
 	HTTPSPort   int
@@ -71,6 +72,39 @@ type Config struct {
 	GuardBan          time.Duration
 	GuardWhitelist    []*net.IPNet
 	GuardNFT          bool
+
+	// Proxy mode (PROXY=true): this instance only relays 443/tcp, 80/tcp and the TURN UDP port
+	// to another securegate server (DOMAIN_TO_PROXY); all other settings are ignored.
+	ProxyMode     bool
+	ProxyUpstream string // host (or host:port of the upstream HTTPS port)
+	ProxyUDP      bool
+	// Main server side: proxy instances relaying to us.
+	ProxyFrontends []string     // their domains (certificate + SNI + Host, IPs trusted)
+	ProxyTrusted   []*net.IPNet // extra trusted source addresses (PROXY_TRUSTED_IPS)
+}
+
+// Hosts returns all host names served by this server: DOMAIN and the proxy frontend domains.
+func (c *Config) Hosts() []string {
+	return append([]string{c.Domain}, c.ProxyFrontends...)
+}
+
+func parseCIDRs(key string) ([]*net.IPNet, error) {
+	var out []*net.IPNet
+	for _, w := range splitList(os.Getenv(key)) {
+		if !strings.Contains(w, "/") {
+			if strings.Contains(w, ":") {
+				w += "/128"
+			} else {
+				w += "/32"
+			}
+		}
+		_, n, err := net.ParseCIDR(w)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", key, err)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 type usersFile struct {
@@ -129,6 +163,7 @@ func Load() (*Config, error) {
 		ACMEEmail:   env("ACME_EMAIL", ""),
 		TLSMode:     strings.ToLower(env("TLS_MODE", "auto")),
 		ACMEStaging: envBool("ACME_STAGING", false),
+		ACMEDir:     env("ACME_DIRECTORY", ""),
 		HTTPAddr:    ":" + env("HTTP_PORT", "80"),
 		HTTPSPort:   envInt("HTTPS_PORT", 443),
 		DataDir:     env("DATA_DIR", "/data"),
@@ -173,6 +208,36 @@ func Load() (*Config, error) {
 		GuardNFT:          envBool("GUARD_NFTABLES", true),
 	}
 	c.HTTPSAddr = ":" + strconv.Itoa(c.HTTPSPort)
+
+	var err error
+	if c.GuardWhitelist, err = parseCIDRs("GUARD_WHITELIST"); err != nil {
+		return nil, err
+	}
+
+	// ---- proxy mode: only the relay settings matter ----
+	c.ProxyMode = envBool("PROXY", false) || envBool("PROXY_MODE", false)
+	if c.ProxyMode {
+		up := strings.ToLower(env("DOMAIN_TO_PROXY", ""))
+		up = strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(up, "https://"), "http://"), "/")
+		if up == "" {
+			return nil, fmt.Errorf("PROXY=true requires DOMAIN_TO_PROXY (domain of the main securegate server)")
+		}
+		if c.Domain != "" && strings.EqualFold(up, c.Domain) {
+			return nil, fmt.Errorf("DOMAIN_TO_PROXY must be the MAIN server, not this proxy's own DOMAIN")
+		}
+		c.ProxyUpstream = up
+		c.ProxyUDP = envBool("PROXY_UDP", true)
+		return c, nil
+	}
+	for _, d := range splitList(os.Getenv("PROXY_FRONTENDS")) {
+		d = strings.ToLower(strings.TrimSuffix(d, "."))
+		if d != c.Domain {
+			c.ProxyFrontends = append(c.ProxyFrontends, d)
+		}
+	}
+	if c.ProxyTrusted, err = parseCIDRs("PROXY_TRUSTED_IPS"); err != nil {
+		return nil, err
+	}
 
 	if c.Domain == "" {
 		return nil, fmt.Errorf("DOMAIN is required")
@@ -252,20 +317,6 @@ func Load() (*Config, error) {
 	}
 	if c.TURNMinPort <= 0 || c.TURNMaxPort < c.TURNMinPort {
 		return nil, fmt.Errorf("invalid TURN port range")
-	}
-	for _, w := range splitList(os.Getenv("GUARD_WHITELIST")) {
-		if !strings.Contains(w, "/") {
-			if strings.Contains(w, ":") {
-				w += "/128"
-			} else {
-				w += "/32"
-			}
-		}
-		_, n, err := net.ParseCIDR(w)
-		if err != nil {
-			return nil, fmt.Errorf("GUARD_WHITELIST: %w", err)
-		}
-		c.GuardWhitelist = append(c.GuardWhitelist, n)
 	}
 	return c, nil
 }

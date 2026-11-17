@@ -28,7 +28,8 @@ import (
 const stagingURL = "https://acme-staging-v02.api.letsencrypt.org/directory"
 
 type Manager struct {
-	domain  string
+	domain  string   // primary domain (DOMAIN)
+	hosts   []string // DOMAIN + proxy frontend domains
 	mode    string
 	strict  bool
 	ac      *autocert.Manager
@@ -39,22 +40,28 @@ type Manager struct {
 	OnSNIReject func(hello *tls.ClientHelloInfo)
 }
 
-func New(domain, mode, email, dataDir string, staging, strictSNI bool) (*Manager, error) {
-	m := &Manager{domain: domain, mode: mode, strict: strictSNI}
+// New creates the manager. hosts[0] is the primary domain; the others are domains of proxy
+// instances relaying to this server (they get their own Let's Encrypt certificates: the ACME
+// HTTP-01 challenge reaches us through the proxy's port 80).
+func New(hosts []string, mode, email, dataDir string, staging bool, directory string, strictSNI bool) (*Manager, error) {
+	domain := hosts[0]
+	m := &Manager{domain: domain, hosts: hosts, mode: mode, strict: strictSNI}
 	if mode != "selfsigned" {
 		m.ac = &autocert.Manager{
 			Prompt:      autocert.AcceptTOS,
-			HostPolicy:  autocert.HostWhitelist(domain),
+			HostPolicy:  autocert.HostWhitelist(hosts...),
 			Cache:       autocert.DirCache(filepath.Join(dataDir, "acme")),
 			Email:       email,
 			RenewBefore: 30 * 24 * time.Hour,
 		}
-		if staging {
+		if directory != "" {
+			m.ac.Client = &acme.Client{DirectoryURL: directory}
+		} else if staging {
 			m.ac.Client = &acme.Client{DirectoryURL: stagingURL}
 		}
 	}
 	if mode != "letsencrypt" {
-		c, err := loadOrCreateSelfSigned(domain, filepath.Join(dataDir, "selfsigned"))
+		c, err := loadOrCreateSelfSigned(hosts, filepath.Join(dataDir, "selfsigned"))
 		if err != nil {
 			return nil, err
 		}
@@ -74,7 +81,7 @@ func (m *Manager) TLSConfig() *tls.Config {
 
 func (m *Manager) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	sni := strings.ToLower(strings.TrimSuffix(hello.ServerName, "."))
-	if sni != "" && sni != m.domain {
+	if sni != "" && !m.Serves(sni) {
 		if m.OnSNIReject != nil {
 			m.OnSNIReject(hello)
 		}
@@ -90,7 +97,11 @@ func (m *Manager) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 		return m.self, nil
 	}
 	h := *hello
-	h.ServerName = m.domain
+	if sni == "" {
+		h.ServerName = m.domain
+	} else {
+		h.ServerName = sni
+	}
 	c, err := m.ac.GetCertificate(&h)
 	if err == nil {
 		return c, nil
@@ -110,6 +121,16 @@ func (m *Manager) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 	return nil, err
 }
 
+// Serves reports whether host is one of our domains.
+func (m *Manager) Serves(host string) bool {
+	for _, h := range m.hosts {
+		if strings.EqualFold(h, host) {
+			return true
+		}
+	}
+	return false
+}
+
 // HTTPHandler wraps the port-80 handler to answer ACME HTTP-01 challenges.
 func (m *Manager) HTTPHandler(fallback http.Handler) http.Handler {
 	if m.ac == nil {
@@ -125,9 +146,9 @@ func (m *Manager) RunRenewal(ctx context.Context) {
 		slog.Info("certs: self-signed mode, ACME disabled")
 		return
 	}
-	check := func() {
+	check := func(domain string) {
 		hello := &tls.ClientHelloInfo{
-			ServerName:        m.domain,
+			ServerName:        domain,
 			CipherSuites:      []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
 			SignatureSchemes:  []tls.SignatureScheme{tls.ECDSAWithP256AndSHA256, tls.PSSWithSHA256},
 			SupportedCurves:   []tls.CurveID{tls.CurveP256, tls.X25519},
@@ -135,14 +156,14 @@ func (m *Manager) RunRenewal(ctx context.Context) {
 		}
 		c, err := m.ac.GetCertificate(hello)
 		if err != nil {
-			slog.Error("certs: obtain/renew failed (will retry)", "domain", m.domain, "err", err)
+			slog.Error("certs: obtain/renew failed (will retry)", "domain", domain, "err", err)
 			return
 		}
 		if c.Leaf == nil && len(c.Certificate) > 0 {
 			c.Leaf, _ = x509.ParseCertificate(c.Certificate[0])
 		}
 		if c.Leaf != nil {
-			slog.Info("certs: certificate OK", "domain", m.domain, "issuer", c.Leaf.Issuer.CommonName,
+			slog.Info("certs: certificate OK", "domain", domain, "issuer", c.Leaf.Issuer.CommonName,
 				"expires", c.Leaf.NotAfter.Format(time.RFC3339), "days_left", int(time.Until(c.Leaf.NotAfter).Hours()/24))
 		}
 	}
@@ -152,19 +173,30 @@ func (m *Manager) RunRenewal(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
-			check()
+			for _, d := range m.hosts {
+				check(d)
+			}
 			timer.Reset(12 * time.Hour)
 		}
 	}
 }
 
-func loadOrCreateSelfSigned(domain, dir string) (*tls.Certificate, error) {
+func loadOrCreateSelfSigned(hosts []string, dir string) (*tls.Certificate, error) {
+	domain := hosts[0]
 	certPath := filepath.Join(dir, "cert.pem")
 	keyPath := filepath.Join(dir, "key.pem")
 	if c, err := tls.LoadX509KeyPair(certPath, keyPath); err == nil {
 		if leaf, err := x509.ParseCertificate(c.Certificate[0]); err == nil &&
-			time.Until(leaf.NotAfter) > 30*24*time.Hour && leaf.VerifyHostname(domain) == nil {
-			return &c, nil
+			time.Until(leaf.NotAfter) > 30*24*time.Hour && leaf.Subject.CommonName == domain {
+			ok := true
+			for _, h := range hosts {
+				if leaf.VerifyHostname(h) != nil {
+					ok = false
+				}
+			}
+			if ok {
+				return &c, nil
+			}
 		}
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -175,7 +207,7 @@ func loadOrCreateSelfSigned(domain, dir string) (*tls.Certificate, error) {
 	tpl := &x509.Certificate{
 		SerialNumber:          serial,
 		Subject:               pkix.Name{CommonName: domain},
-		DNSNames:              []string{domain},
+		DNSNames:              hosts,
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().AddDate(2, 0, 0),
 		KeyUsage:              x509.KeyUsageDigitalSignature,
@@ -194,6 +226,6 @@ func loadOrCreateSelfSigned(domain, dir string) (*tls.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("certs: generated self-signed certificate", "domain", domain)
+	slog.Info("certs: generated self-signed certificate", "domains", hosts)
 	return &c, nil
 }

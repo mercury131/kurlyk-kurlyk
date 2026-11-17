@@ -21,6 +21,7 @@ import (
 	"securegate/internal/certs"
 	"securegate/internal/chat"
 	"securegate/internal/config"
+	"securegate/internal/frontend"
 	"securegate/internal/guard"
 	"securegate/internal/mtproxy"
 	"securegate/internal/mux"
@@ -54,6 +55,10 @@ func main() {
 		level = slog.LevelError
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
+	if cfg.ProxyMode {
+		runProxy(cfg)
+		return
+	}
 	slog.Info("securegate starting", "domain", cfg.Domain, "tls_mode", cfg.TLSMode,
 		"sstp", cfg.SSTPEnable, "mtproxy", cfg.MTEnable, "chat", cfg.ChatEnable, "turn", cfg.TURNEnable)
 	_ = os.MkdirAll(cfg.DataDir, 0o700)
@@ -70,13 +75,19 @@ func main() {
 	})
 	defer g.Close()
 
-	cm, err := certs.New(cfg.Domain, cfg.TLSMode, cfg.ACMEEmail, cfg.DataDir, cfg.ACMEStaging, cfg.SNIStrict)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fe := frontend.New(cfg.ProxyFrontends, cfg.ProxyTrusted)
+	if fe.Enabled() {
+		slog.Info("frontend: proxy instances relay to this server", "domains", cfg.ProxyFrontends, "trusted_ips", len(cfg.ProxyTrusted))
+		go fe.Run(ctx)
+	}
+
+	cm, err := certs.New(cfg.Hosts(), cfg.TLSMode, cfg.ACMEEmail, cfg.DataDir, cfg.ACMEStaging, cfg.ACMEDir, cfg.SNIStrict)
 	if err != nil {
 		slog.Error("certs init", "err", err)
 		os.Exit(1)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	go cm.RunRenewal(ctx)
 
 	// MTProxy (telemt) integration
@@ -87,16 +98,18 @@ func main() {
 	}
 	if cfg.MTEnable && len(cfg.MTUsers) > 0 {
 		mt = mtproxy.NewForwarder(cfg.MTSecretBytes(), cfg.MTInternalPort)
-		links := mtproxy.Links(cfg.Domain, cfg.HTTPSPort, cfg.MTUsers)
-		names := make([]string, 0, len(links))
-		for n := range links {
-			names = append(names, n)
-		}
-		sort.Strings(names)
 		var sb strings.Builder
-		for _, n := range names {
-			slog.Info("mtproxy: link", "user", n, "url", links[n])
-			fmt.Fprintf(&sb, "%s: %s\n", n, links[n])
+		for _, host := range cfg.Hosts() { // links for DOMAIN and for every proxy instance
+			links := mtproxy.Links(host, cfg.HTTPSPort, cfg.MTUsers)
+			names := make([]string, 0, len(links))
+			for n := range links {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			for _, n := range names {
+				slog.Info("mtproxy: link", "user", n, "host", host, "url", links[n])
+				fmt.Fprintf(&sb, "%s (%s): %s\n", n, host, links[n])
+			}
 		}
 		_ = os.WriteFile(filepath.Join(cfg.DataDir, "mtproxy-links.txt"), []byte(sb.String()), 0o600)
 	}
@@ -149,7 +162,7 @@ func main() {
 	var chatHandler http.Handler
 	if cfg.ChatEnable {
 		cs, err := chat.New(chat.Config{
-			Domain: cfg.Domain, Secret: cfg.ChatSecret, MaxUsers: cfg.ChatMaxUsers,
+			Domain: cfg.Domain, Serves: cm.Serves, Secret: cfg.ChatSecret, MaxUsers: cfg.ChatMaxUsers,
 			AllowedPhones: cfg.ChatAllowedPhones,
 			MaxFileBytes:  int64(cfg.ChatMaxFileMB) << 20, FilesMaxBytes: int64(cfg.ChatFilesMaxGB) << 30,
 			FileTTL: cfg.ChatFileTTL, QueueTTL: cfg.ChatQueueTTL, DataDir: filepath.Join(cfg.DataDir, "chat"),
@@ -166,7 +179,7 @@ func main() {
 	// HTTPS (behind mux)
 	httpLn := netx.NewChanListener(&net.TCPAddr{IP: net.IPv4zero, Port: cfg.HTTPSPort})
 	httpsSrv := &http.Server{
-		Handler:           web.Handler(cfg.Domain, chatHandler, g.Strike),
+		Handler:           web.Handler(cm.Serves, chatHandler, g.Strike),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       0, // file uploads / websockets
 		WriteTimeout:      0,
@@ -177,7 +190,7 @@ func main() {
 	}
 	go func() { _ = httpsSrv.Serve(httpLn) }()
 
-	m := &mux.Server{Domain: cfg.Domain, Guard: g, TLS: cm.TLSConfig(), MT: mt, SSTP: sstpSrv, TURN: turnSrv, HTTP: httpLn}
+	m := &mux.Server{Serves: cm.Serves, Frontends: fe, Guard: g, TLS: cm.TLSConfig(), MT: mt, SSTP: sstpSrv, TURN: turnSrv, HTTP: httpLn}
 	ln443, err := net.Listen("tcp", cfg.HTTPSAddr)
 	if err != nil {
 		slog.Error("listen 443", "err", err)
@@ -192,14 +205,14 @@ func main() {
 		os.Exit(1)
 	}
 	httpSrv := &http.Server{
-		Handler:           cm.HTTPHandler(web.RedirectHandler(cfg.Domain, strconv.Itoa(cfg.HTTPSPort), g.Strike)),
+		Handler:           cm.HTTPHandler(web.RedirectHandler(cfg.Domain, cm.Serves, strconv.Itoa(cfg.HTTPSPort), g.Strike)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    8 << 10,
 	}
-	go func() { _ = httpSrv.Serve(&guardedListener{Listener: ln80, g: g}) }()
+	go func() { _ = httpSrv.Serve(&guardedListener{Listener: ln80, g: g, fe: fe}) }()
 
 	_ = os.WriteFile("/tmp/securegate.ready", []byte("ok"), 0o644)
 	slog.Info("securegate ready", "https", cfg.HTTPSAddr, "http", cfg.HTTPAddr)
@@ -225,7 +238,8 @@ func main() {
 
 type guardedListener struct {
 	net.Listener
-	g *guard.Guard
+	g  *guard.Guard
+	fe *frontend.Set
 }
 
 func (l *guardedListener) Accept() (net.Conn, error) {
@@ -233,6 +247,13 @@ func (l *guardedListener) Accept() (net.Conn, error) {
 		c, err := l.Listener.Accept()
 		if err != nil {
 			return nil, err
+		}
+		if l.fe.TrustedAddr(c.RemoteAddr()) { // relayed by a proxy instance: real client IP
+			c2, ok := mux.AcceptProxied(c)
+			if !ok {
+				continue
+			}
+			c = c2
 		}
 		release, ok := l.g.Admit(guard.IPOf(c.RemoteAddr()))
 		if !ok {

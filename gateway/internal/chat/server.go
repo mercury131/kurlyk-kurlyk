@@ -32,6 +32,7 @@ const Version = "1.0"
 
 type Config struct {
 	Domain        string
+	Serves        func(host string) bool // DOMAIN or a proxy frontend domain (nil: only Domain)
 	Secret        string
 	MaxUsers      int
 	AllowedPhones []string
@@ -219,17 +220,17 @@ func (s *Server) routeAPI(w http.ResponseWriter, r *http.Request, p, phone strin
 		writeJSON(w, 200, map[string]any{"users": out})
 	case p == "/config" && r.Method == http.MethodGet:
 		writeJSON(w, 200, map[string]any{
-			"version":      Version,
-			"server_time":  time.Now().Unix(),
-			"max_file_mb":  s.cfg.MaxFileBytes >> 20,
-			"file_ttl_h":   int(s.cfg.FileTTL.Hours()),
-			"queue_ttl_h":  int(s.cfg.QueueTTL.Hours()),
-			"max_users":    s.cfg.MaxUsers,
-			"ice_servers":  s.iceServers(phone),
-			"ws_url":       fmt.Sprintf("wss://%s%s/chat/ws", s.cfg.Domain, portSuffix(s.cfg.HTTPSPort)),
+			"version":     Version,
+			"server_time": time.Now().Unix(),
+			"max_file_mb": s.cfg.MaxFileBytes >> 20,
+			"file_ttl_h":  int(s.cfg.FileTTL.Hours()),
+			"queue_ttl_h": int(s.cfg.QueueTTL.Hours()),
+			"max_users":   s.cfg.MaxUsers,
+			"ice_servers": s.iceServers(phone, s.hostOf(r)),
+			"ws_url":      fmt.Sprintf("wss://%s%s/chat/ws", s.hostOf(r), portSuffix(s.cfg.HTTPSPort)),
 		})
 	case p == "/turn" && r.Method == http.MethodGet:
-		writeJSON(w, 200, map[string]any{"ice_servers": s.iceServers(phone), "ttl": 86400})
+		writeJSON(w, 200, map[string]any{"ice_servers": s.iceServers(phone, s.hostOf(r)), "ttl": 86400})
 	case p == "/groups" && r.Method == http.MethodGet:
 		gs := s.store.GroupsOf(phone)
 		if gs == nil {
@@ -265,8 +266,28 @@ func (s *Server) userView(u User) map[string]any {
 	return map[string]any{"phone": u.Phone, "name": u.Name, "online": online, "last_seen": ls, "avatar_ver": u.AvatarVer}
 }
 
-func (s *Server) iceServers(phone string) []map[string]any {
-	host := s.cfg.Domain
+// hostOf returns the domain the client used (DOMAIN, or a proxy instance's domain: clients of a
+// proxy must keep talking to the proxy - WebSocket, TURN-over-TLS and TURN UDP are relayed by it).
+func (s *Server) hostOf(r *http.Request) string {
+	h := strings.ToLower(r.Host)
+	if i := strings.LastIndex(h, ":"); i > 0 && !strings.Contains(h[i:], "]") {
+		h = h[:i]
+	}
+	h = strings.TrimSuffix(h, ".")
+	if h != "" && s.serves(h) {
+		return h
+	}
+	return s.cfg.Domain
+}
+
+func (s *Server) serves(h string) bool {
+	if s.cfg.Serves != nil {
+		return s.cfg.Serves(h)
+	}
+	return strings.EqualFold(h, s.cfg.Domain)
+}
+
+func (s *Server) iceServers(phone, host string) []map[string]any {
 	list := []map[string]any{}
 	if !s.cfg.TURNEnabled {
 		return list

@@ -62,7 +62,11 @@ func newHub(s *Server) *Hub {
 		WriteBufferSize: 16384,
 		CheckOrigin: func(r *http.Request) bool {
 			o := r.Header.Get("Origin")
-			return o == "" || strings.EqualFold(o, "https://"+s.cfg.Domain)
+			if o == "" {
+				return true
+			}
+			lo := strings.ToLower(o)
+			return strings.HasPrefix(lo, "https://") && s.serves(strings.TrimPrefix(lo, "https://"))
 		},
 	}
 	return h

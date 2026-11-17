@@ -5,7 +5,6 @@
 package mtproxy
 
 import (
-	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
@@ -82,42 +81,13 @@ func (f *Forwarder) Forward(c net.Conn, first []byte) {
 		c.Close()
 		return
 	}
-	hdr := proxyV2Header(c.RemoteAddr(), c.LocalAddr())
+	hdr := netx.ProxyV2Header(c.RemoteAddr(), c.LocalAddr())
 	if _, err := up.Write(append(hdr, first...)); err != nil {
 		up.Close()
 		c.Close()
 		return
 	}
 	netx.Pipe(c, up)
-}
-
-var v2sig = []byte("\r\n\r\n\x00\r\nQUIT\n")
-
-func proxyV2Header(src, dst net.Addr) []byte {
-	s, _ := src.(*net.TCPAddr)
-	d, _ := dst.(*net.TCPAddr)
-	var b bytes.Buffer
-	b.Write(v2sig)
-	b.WriteByte(0x21) // v2, PROXY
-	if s == nil || d == nil {
-		b.WriteByte(0x00)
-		b.Write([]byte{0, 0})
-		return b.Bytes()
-	}
-	if s4, d4 := s.IP.To4(), d.IP.To4(); s4 != nil && d4 != nil {
-		b.WriteByte(0x11) // TCP over IPv4
-		binary.Write(&b, binary.BigEndian, uint16(12))
-		b.Write(s4)
-		b.Write(d4)
-	} else {
-		b.WriteByte(0x21) // TCP over IPv6
-		binary.Write(&b, binary.BigEndian, uint16(36))
-		b.Write(s.IP.To16())
-		b.Write(d.IP.To16())
-	}
-	binary.Write(&b, binary.BigEndian, uint16(s.Port))
-	binary.Write(&b, binary.BigEndian, uint16(d.Port))
-	return b.Bytes()
 }
 
 // Links returns tg:// links for all users.
@@ -132,6 +102,15 @@ func Links(domain string, port int, users map[string]string) map[string]string {
 		out[name] = "tg://proxy?" + q.Encode()
 	}
 	return out
+}
+
+// WriteDisabled tells the telemt container to stay idle (reason is printed in its log).
+func WriteDisabled(dir, reason string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	_ = os.Remove(filepath.Join(dir, "config.toml"))
+	return os.WriteFile(filepath.Join(dir, "DISABLED"), []byte(reason+"\n"), 0o644)
 }
 
 // WriteTelemtConfig writes telemt's config.toml (telemt watches and hot-reloads it).

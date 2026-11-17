@@ -16,11 +16,11 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"strings"
 	"time"
 
 	"golang.org/x/crypto/acme"
 
+	"securegate/internal/frontend"
 	"securegate/internal/guard"
 	"securegate/internal/mtproxy"
 	"securegate/internal/netx"
@@ -29,13 +29,14 @@ import (
 )
 
 type Server struct {
-	Domain string
-	Guard  *guard.Guard
-	TLS    *tls.Config
-	MT     *mtproxy.Forwarder // nil if disabled
-	SSTP   *sstp.Server       // nil if disabled
-	TURN   *turnsrv.Server    // nil if disabled
-	HTTP   *netx.ChanListener
+	Serves    func(host string) bool // DOMAIN or a proxy frontend domain
+	Frontends *frontend.Set          // proxy instances (PROXY v2 header with the real client IP)
+	Guard     *guard.Guard
+	TLS       *tls.Config
+	MT        *mtproxy.Forwarder // nil if disabled
+	SSTP      *sstp.Server       // nil if disabled
+	TURN      *turnsrv.Server    // nil if disabled
+	HTTP      *netx.ChanListener
 }
 
 // Serve accepts connections on ln until it is closed.
@@ -60,6 +61,17 @@ func (s *Server) Serve(ln net.Listener) error {
 }
 
 func (s *Server) handle(c net.Conn) {
+	if tc, ok := c.(*net.TCPConn); ok {
+		_ = tc.SetKeepAlive(true)
+		_ = tc.SetKeepAlivePeriod(30 * time.Second)
+	}
+	if s.Frontends.TrustedAddr(c.RemoteAddr()) {
+		c2, ok := AcceptProxied(c)
+		if !ok {
+			return
+		}
+		c = c2
+	}
 	ip := guard.IPOf(c.RemoteAddr())
 	release, ok := s.Guard.Admit(ip)
 	if !ok {
@@ -72,10 +84,6 @@ func (s *Server) handle(c net.Conn) {
 			release()
 		}
 	}()
-	if tc, ok := c.(*net.TCPConn); ok {
-		_ = tc.SetKeepAlive(true)
-		_ = tc.SetKeepAlivePeriod(30 * time.Second)
-	}
 
 	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
 	hdr := make([]byte, 5)
@@ -121,7 +129,7 @@ func (s *Server) handle(c net.Conn) {
 
 	// 2. Our TLS.
 	sni := parseSNI(rec[5:])
-	if sni != "" && !strings.EqualFold(sni, s.Domain) {
+	if sni != "" && !s.Serves(sni) {
 		s.Guard.Strike(ip, 2, "foreign SNI "+truncate(sni, 60))
 		netx.Reset(c)
 		return
@@ -169,6 +177,22 @@ func (s *Server) handle(c net.Conn) {
 		handedOff = true
 		s.HTTP.Push(&netx.ReaderConn{Conn: tconn, R: br, OnClose: release})
 	}
+}
+
+// AcceptProxied reads the PROXY v2 header sent by a trusted proxy instance and returns the
+// connection with the real client address. On error the connection is closed.
+func AcceptProxied(c net.Conn) (net.Conn, bool) {
+	src, err := netx.ReadProxyV2(c, 10*time.Second)
+	if err != nil {
+		slog.Debug("frontend: connection without valid PROXY v2 header", "from", c.RemoteAddr(), "err", err)
+		netx.Reset(c)
+		return nil, false
+	}
+	if src == nil { // LOCAL: connectivity check of the proxy itself, no client behind it
+		_ = c.Close()
+		return nil, false
+	}
+	return &netx.AddrConn{Conn: c, Remote: src}, true
 }
 
 func truncate(s string, n int) string {

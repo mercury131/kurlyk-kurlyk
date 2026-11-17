@@ -34,7 +34,7 @@ func ipOf(r *http.Request) string {
 }
 
 // Handler builds the HTTPS handler: protection -> static site / chat.
-func Handler(domain string, chat http.Handler, strike StrikeFunc) http.Handler {
+func Handler(serves func(host string) bool, chat http.Handler, strike StrikeFunc) http.Handler {
 	sub, _ := fs.Sub(staticFS, "static")
 	files := http.FileServer(http.FS(sub))
 
@@ -48,11 +48,7 @@ func Handler(domain string, chat http.Handler, strike StrikeFunc) http.Handler {
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
-		host := strings.ToLower(r.Host)
-		if i := strings.LastIndex(host, ":"); i > 0 && !strings.Contains(host[i:], "]") {
-			host = host[:i]
-		}
-		if host != domain {
+		if !serves(HostOnly(r.Host)) {
 			strike(ip, 2, "http wrong Host header")
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
@@ -103,8 +99,18 @@ func Handler(domain string, chat http.Handler, strike StrikeFunc) http.Handler {
 	})
 }
 
-// RedirectHandler is the port-80 handler (after ACME): redirect to https://domain.
-func RedirectHandler(domain string, httpsPort string, strike StrikeFunc) http.Handler {
+// HostOnly returns the lower-case host part of a Host header.
+func HostOnly(h string) string {
+	host := strings.ToLower(h)
+	if i := strings.LastIndex(host, ":"); i > 0 && !strings.Contains(host[i:], "]") {
+		host = host[:i]
+	}
+	return strings.TrimSuffix(host, ".")
+}
+
+// RedirectHandler is the port-80 handler (after ACME): redirect to https://<host> when the
+// request is for one of our domains (DOMAIN or a proxy frontend), otherwise to https://domain.
+func RedirectHandler(domain string, serves func(host string) bool, httpsPort string, strike StrikeFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := ipOf(r)
 		if badPath.MatchString(r.URL.Path) {
@@ -118,7 +124,11 @@ func RedirectHandler(domain string, httpsPort string, strike StrikeFunc) http.Ha
 			return
 		}
 		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
-		target := "https://" + domain
+		host := domain
+		if h := HostOnly(r.Host); serves(h) {
+			host = h
+		}
+		target := "https://" + host
 		if httpsPort != "443" {
 			target += ":" + httpsPort
 		}

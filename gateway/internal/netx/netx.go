@@ -87,6 +87,9 @@ func Pipe(a, b net.Conn) {
 
 // Reset closes a TCP connection with RST (no FIN handshake, no lingering).
 func Reset(c net.Conn) {
+	if ac, ok := c.(*AddrConn); ok {
+		c = ac.Conn
+	}
 	if tc, ok := c.(*net.TCPConn); ok {
 		_ = tc.SetLinger(0)
 	}
