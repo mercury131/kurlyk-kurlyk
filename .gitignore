@@ -1,4 +1,3 @@
-.env
 data/
 config/users.yml
 sstp.txt
