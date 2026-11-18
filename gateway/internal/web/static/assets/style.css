@@ -1,0 +1,33 @@
+:root{--bg:#faf7f2;--card:#fff;--ink:#2b2622;--muted:#7a716a;--accent:#b06a3b;--line:#ece4d8}
+*{box-sizing:border-box}
+body{margin:0;font-family:Georgia,"Times New Roman",serif;color:var(--ink);background:var(--bg);line-height:1.6}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+header.site{background:var(--card);border-bottom:1px solid var(--line)}
+.wrap{max-width:1000px;margin:0 auto;padding:0 20px}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:16px 0}
+.brand{font-size:22px;font-weight:bold;letter-spacing:.3px}
+.brand span{color:var(--accent)}
+nav a{margin-left:22px;font-family:system-ui,Segoe UI,sans-serif;font-size:15px;color:var(--ink)}
+.hero{padding:40px 0 20px}
+.hero h1{font-size:34px;margin:0 0 10px}
+.hero p{font-size:18px;color:var(--muted);max-width:640px}
+.search{margin:18px 0;display:flex;gap:8px;max-width:420px}
+.search input{flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:6px;font-size:15px}
+.search button{padding:10px 16px;border:0;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:18px;padding:20px 0 50px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;transition:transform .12s}
+.card:hover{transform:translateY(-3px)}
+.card img{width:100%;height:150px;object-fit:cover;display:block;background:#efe8dd}
+.card .body{padding:12px 14px}
+.card h3{margin:0 0 6px;font-size:18px}
+.card p{margin:0;color:var(--muted);font-size:14px}
+article.breed{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:0 0 24px;margin:26px 0;overflow:hidden}
+article.breed img{width:100%;height:280px;object-fit:cover;display:block;background:#efe8dd}
+article.breed .pad{padding:8px 26px}
+article.breed h1{margin:16px 0 4px}
+.tags{font-family:system-ui,sans-serif;font-size:13px;color:var(--muted);margin:0 0 14px}
+.tags b{color:var(--ink);font-weight:600}
+footer.site{border-top:1px solid var(--line);background:var(--card);color:var(--muted);font-family:system-ui,sans-serif;font-size:13px}
+footer.site .wrap{padding:22px 20px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+.crumbs{font-family:system-ui,sans-serif;font-size:13px;color:var(--muted);padding:14px 0 0}

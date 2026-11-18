@@ -7,8 +7,11 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"path"
 	"regexp"
 	"strings"
+
+	"securegate/internal/maskvpn"
 )
 
 //go:embed static
@@ -34,12 +37,29 @@ func ipOf(r *http.Request) string {
 }
 
 // Handler builds the HTTPS handler: protection -> static site / chat.
-func Handler(serves func(host string) bool, chat http.Handler, strike StrikeFunc) http.Handler {
+// vpn (may be nil) is the masquerading VPN: an authenticated request on maskvpn.Path is upgraded to
+// the tunnel; everything else - including an unauthenticated request on that path - sees the site.
+func Handler(serves func(host string) bool, chat http.Handler, vpn *maskvpn.Server, strike StrikeFunc) http.Handler {
 	sub, _ := fs.Sub(staticFS, "static")
 	files := http.FileServer(http.FS(sub))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := ipOf(r)
+		// The masquerade endpoint is handled before any anti-bot logic: a valid proof upgrades to
+		// the tunnel, otherwise it answers like an ordinary analytics endpoint (204, no strike) so
+		// a prober cannot tell it apart from a normal site.
+		if vpn != nil && r.URL.Path == maskvpn.Path {
+			if vpn.TryUpgrade(w, r, ip) {
+				return
+			}
+			if !serves(HostOnly(r.Host)) {
+				http.Error(w, "Not Found", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		h := w.Header()
 		h.Set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet, noimageindex")
 		h.Set("Strict-Transport-Security", "max-age=31536000")
@@ -84,19 +104,37 @@ func Handler(serves func(host string) bool, chat http.Handler, strike StrikeFunc
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		switch {
-		case path == "/" || path == "/index.html" || path == "/favicon.svg" || strings.HasPrefix(path, "/assets/"):
-			h.Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'")
-			h.Set("Cache-Control", "public, max-age=3600")
-			if path == "/index.html" {
-				r.URL.Path = "/"
-			}
-			files.ServeHTTP(w, r)
-		default:
-			strike(ip, 1, "http 404 "+trunc(path, 60))
-			http.Error(w, "Not Found", http.StatusNotFound)
+		// Serve any file that exists in the cover site; a request for something that does not exist
+		// is a normal 404 for a casual visitor but earns a small strike (scanners hit many paths).
+		h.Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; frame-ancestors 'none'")
+		h.Set("Cache-Control", "public, max-age=3600")
+		if path == "/index.html" {
+			path, r.URL.Path = "/", "/"
 		}
+		if coverExists(sub, path) {
+			files.ServeHTTP(w, r)
+			return
+		}
+		strike(ip, 1, "http 404 "+trunc(path, 60))
+		http.Error(w, "Not Found", http.StatusNotFound)
 	})
+}
+
+// coverExists reports whether the cover site has the requested path (a real file, or a directory
+// with an index.html).
+func coverExists(sub fs.FS, p string) bool {
+	name := strings.TrimPrefix(path.Clean("/"+strings.TrimPrefix(p, "/")), "/")
+	if name == "" {
+		name = "index.html"
+	}
+	if st, err := fs.Stat(sub, name); err == nil {
+		if !st.IsDir() {
+			return true
+		}
+		_, err := fs.Stat(sub, path.Join(name, "index.html"))
+		return err == nil
+	}
+	return false
 }
 
 // HostOnly returns the lower-case host part of a Host header.

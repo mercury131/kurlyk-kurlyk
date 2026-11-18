@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" role="img" aria-label="Собака">
+  <rect width="400" height="300" fill="#e7dccb"/>
+  <rect width="400" height="300" fill="url(#gd)"/>
+  <defs><linearGradient id="gd" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#ede3d2"/><stop offset="1" stop-color="#cdb99a"/>
+  </linearGradient></defs>
+  <g transform="translate(200,165)">
+    <ellipse cx="-70" cy="0" rx="26" ry="52" fill="#6f5a43"/>
+    <ellipse cx="70" cy="0" rx="26" ry="52" fill="#6f5a43"/>
+    <ellipse cx="0" cy="20" rx="82" ry="74" fill="#8a7152"/>
+    <ellipse cx="0" cy="78" rx="52" ry="40" fill="#a08a68"/>
+    <circle cx="-30" cy="5" r="8" fill="#2b2622"/>
+    <circle cx="30" cy="5" r="8" fill="#2b2622"/>
+    <ellipse cx="0" cy="50" rx="16" ry="12" fill="#3a2f27"/>
+  </g>
+</svg>

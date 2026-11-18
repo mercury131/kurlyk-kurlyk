@@ -8,6 +8,10 @@
 #   ./sgctl wg remove <name>                delete a client
 #   ./sgctl mtproxy [user]                  MTProxy links (all implementations / domains)
 #   ./sgctl mtproxy qr <user> [impl] [host] QR code of a tg:// link
+#   ./sgctl vpn add <name> [--via <host>]   masquerading-VPN user: config + QR for the app
+#   ./sgctl vpn show <name> [--via <host>]  show config + QR again
+#   ./sgctl vpn conf <name> [--via <host>]  print only the config (> name.sgvpn)
+#   ./sgctl vpn list | remove <name>        VPN users: list / delete
 #   ./sgctl bans | unban <ip|all>           protection: list / remove bans
 #   ./sgctl status                          containers and ports
 #
@@ -24,11 +28,13 @@
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; }
 
-env_val() { # value of KEY from .env (last assignment wins, quotes stripped)
+env_val() { # value of KEY from .env (last assignment wins, quotes stripped); empty if absent
   [ -f .env ] || return 0
-  grep -E "^[[:space:]]*$1=" .env | tail -n1 | cut -d= -f2- | sed -e "s/^['\"]//" -e "s/['\"][[:space:]]*$//"
+  # `|| true`: a missing key makes grep exit non-zero and, with `set -o pipefail`, would otherwise
+  # abort the caller's `x=$(env_val ...)` under `set -e`.
+  { grep -E "^[[:space:]]*$1=" .env | tail -n1 | cut -d= -f2- | sed -e "s/^['\"]//" -e "s/['\"][[:space:]]*$//"; } || true
 }
 is_proxy() { case "$(env_val PROXY | tr 'A-Z' 'a-z')" in 1|true|yes|on) return 0;; esac; return 1; }
 
@@ -115,6 +121,76 @@ case "$cmd" in
     else
       cat "$f"
     fi
+    ;;
+  vpn)
+    # Masquerading-VPN users. Secrets live in ./data/maskvpn/users/<name>.secret (same volume the
+    # gateway reads, reloaded within ~15 s, so no restart). QR/config is for the Android app.
+    sub=${1:-}; [ $# -gt 0 ] && shift
+    if is_proxy; then
+      echo "This server runs in PROXY mode: VPN users are created on the MAIN server ($(env_val DOMAIN_TO_PROXY))."
+      echo "There:  ./sgctl vpn add <name> --via $(env_val DOMAIN)     (config that connects through this proxy)"
+      exit 1
+    fi
+    udir=data/maskvpn/users
+    vname=""; via=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --via) via=${2:?--via needs a host}; shift 2 ;;
+        *) vname=$1; shift ;;
+      esac
+    done
+    valid_name() { echo "$1" | grep -qE '^[A-Za-z0-9._-]{1,64}$'; }
+    vpn_json() { # $1=name $2=secret -> JSON config
+      local host port
+      host=${via:-$(env_val DOMAIN)}
+      port=$(env_val HTTPS_PORT); port=${port:-443}
+      printf '{"v":1,"name":"%s","host":"%s","port":%s,"path":"/app/events","sni":"%s","secret":"%s","transport":"tcp-https"}' \
+        "$1" "$host" "$port" "$host" "$2"
+    }
+    vpn_uri() { # $1=name $2=secret -> sgvpn:// URI (base64url of the JSON)
+      printf 'sgvpn://%s' "$(vpn_json "$1" "$2" | base64 -w0 2>/dev/null | tr '+/' '-_' | tr -d '=')"
+    }
+    show_qr() { # $1=uri
+      if running securegate-wireguard; then docker exec securegate-wireguard qrencode -t ansiutf8 -m 2 "$1"
+      elif command -v qrencode >/dev/null; then qrencode -t ansiutf8 -m 2 "$1"
+      else echo "(install qrencode for a QR code: apt install qrencode)"; fi
+    }
+    case "$sub" in
+      add)
+        valid_name "$vname" || { echo "usage: ./sgctl vpn add <name> [--via <host>]  (name: A-Za-z0-9._-)"; exit 1; }
+        case "$(env_val VPN_ENABLE | tr 'A-Z' 'a-z')" in 1|true|yes|on) : ;;
+          *) echo "VPN is disabled. Set VPN_ENABLE=true in .env and run ./sgctl up, then add users." >&2; exit 1;; esac
+        mkdir -p "$udir"; ( umask 077; [ -s "$udir/$vname.secret" ] || openssl rand -hex 16 > "$udir/$vname.secret" )
+        echo "VPN user '$vname' ready (reloaded by the gateway within ~15 s)."
+        sub=show
+        ;;
+    esac
+    case "$sub" in
+      show|conf)
+        valid_name "$vname" || { echo "usage: ./sgctl vpn $sub <name> [--via <host>]"; exit 1; }
+        [ -s "$udir/$vname.secret" ] || { echo "no such VPN user: $vname  (./sgctl vpn list)"; exit 1; }
+        secret=$(tr -d '[:space:]' < "$udir/$vname.secret")
+        if [ "$sub" = conf ]; then vpn_json "$vname" "$secret"; echo; else
+          uri=$(vpn_uri "$vname" "$secret")
+          echo "$uri"; echo
+          show_qr "$uri"
+          echo
+          echo "Scan in the app (Add tunnel -> Scan QR), or save the line above as $vname.sgvpn and import it."
+          [ -n "$via" ] || echo "Through a proxy:  ./sgctl vpn show $vname --via <proxy-domain>"
+        fi
+        ;;
+      list)
+        if [ -d "$udir" ] && ls "$udir"/*.secret >/dev/null 2>&1; then
+          for f in "$udir"/*.secret; do n=$(basename "$f" .secret); echo "$n"; done
+        else echo "no VPN users yet:  ./sgctl vpn add <name>"; fi
+        ;;
+      remove|rm|delete)
+        valid_name "$vname" || { echo "usage: ./sgctl vpn remove <name>"; exit 1; }
+        if [ -e "$udir/$vname.secret" ]; then rm -f "$udir/$vname.secret"; echo "removed VPN user '$vname' (access revoked within ~15 s)";
+        else echo "no such VPN user: $vname"; exit 1; fi
+        ;;
+      *) echo "usage: ./sgctl vpn add|show|conf|list|remove <name> [--via <host>]"; exit 2 ;;
+    esac
     ;;
   bans)
     # shellcheck disable=SC2046

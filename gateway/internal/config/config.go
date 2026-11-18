@@ -85,6 +85,16 @@ type Config struct {
 	GuardWhitelist    []*net.IPNet
 	GuardNFT          bool
 
+	// Masquerading VPN (experimental, VPN_ENABLE=false by default): a custom encrypted tunnel
+	// hidden inside normal HTTPS to the cover website on :443. Unauthenticated requests get the
+	// real website (Reality-like fallback), so an active prober only sees an ordinary site.
+	VPNEnable   bool
+	VPNSecret   string            // single shared secret (user "default"); back-compatible
+	VPNUsers    map[string]string // name -> secret (VPN_USERS); per-client add/revoke
+	VPNUsersDir string            // data/maskvpn/users: <name>.secret files added by sgctl at runtime
+	VPNSubnet   string            // TUN client pool (server = first address)
+	VPNDNS      []string          // DNS pushed to VPN clients
+
 	// Proxy mode (PROXY=true): this instance only relays 443/tcp, 80/tcp and the TURN UDP port
 	// to another securegate server (DOMAIN_TO_PROXY); all other settings are ignored.
 	ProxyMode     bool
@@ -224,6 +234,13 @@ func Load() (*Config, error) {
 		WGEnable: envBool("WG_ENABLE", true),
 		WGPort:   envInt("WG_PORT", 51820),
 
+		VPNEnable:   envBool("VPN_ENABLE", false),
+		VPNSecret:   env("VPN_SECRET", ""),
+		VPNUsers:    map[string]string{},
+		VPNUsersDir: env("VPN_USERS_DIR", "/data/maskvpn/users"),
+		VPNSubnet:   env("VPN_SUBNET", "10.18.0.0/24"),
+		VPNDNS:      splitList(env("VPN_DNS", "8.8.8.8,8.8.4.4")),
+
 		ChatEnable:     envBool("CHAT_ENABLE", true),
 		ChatSecret:     env("CHAT_SECRET", ""),
 		ChatMaxUsers:   envInt("CHAT_MAX_USERS", 100),
@@ -311,6 +328,13 @@ func Load() (*Config, error) {
 		}
 		c.MTUsers[e[:i]] = strings.ToLower(e[i+1:])
 	}
+	for _, e := range splitList(os.Getenv("VPN_USERS")) {
+		i := strings.Index(e, ":")
+		if i <= 0 {
+			return nil, fmt.Errorf("VPN_USERS entry %q must be name:secret", e)
+		}
+		c.VPNUsers[e[:i]] = e[i+1:]
+	}
 	c.ChatAllowedPhones = splitList(os.Getenv("CHAT_ALLOWED_PHONES"))
 
 	// Optional YAML file (merged on top of env).
@@ -355,6 +379,14 @@ func Load() (*Config, error) {
 	}
 	if c.Domain == "vpn.example.com" {
 		return nil, fmt.Errorf("DOMAIN still has the example value - set your domain in .env")
+	}
+	if c.VPNEnable && c.VPNSecret != "" { // empty is allowed: users may come only from VPN_USERS / files
+		if c.VPNSecret == "change-me-to-a-long-random-vpn-secret" {
+			return nil, fmt.Errorf("VPN_SECRET still has the example value - set your own secret in .env")
+		}
+		if len(c.VPNSecret) < 16 {
+			return nil, fmt.Errorf("VPN_SECRET must be at least 16 characters (or leave it empty and use ./sgctl vpn add)")
+		}
 	}
 	if c.ChatEnable && len(c.ChatSecret) < 16 {
 		return nil, fmt.Errorf("CHAT_SECRET must be at least 16 characters (or set CHAT_ENABLE=false)")

@@ -24,6 +24,7 @@ import (
 	"securegate/internal/config"
 	"securegate/internal/frontend"
 	"securegate/internal/guard"
+	"securegate/internal/maskvpn"
 	"securegate/internal/mtproxy"
 	"securegate/internal/mux"
 	"securegate/internal/netx"
@@ -211,10 +212,32 @@ func main() {
 		chatHandler = cs
 	}
 
+	// Masquerading VPN (experimental): hidden inside the HTTPS site on :443, L3 routing over a TUN.
+	var vpnSrv *maskvpn.Server
+	if cfg.VPNEnable {
+		_ = os.MkdirAll(cfg.VPNUsersDir, 0o700)
+		static := map[string]string{}
+		if cfg.VPNSecret != "" {
+			static["default"] = cfg.VPNSecret
+		}
+		for k, v := range cfg.VPNUsers {
+			static[k] = v
+		}
+		router, err := maskvpn.NewRouter(cfg.VPNSubnet, cfg.VPNDNS)
+		if err != nil {
+			slog.Error("maskvpn: disabled, TUN setup failed (needs privileged + /dev/net/tun)", "err", err)
+		} else {
+			defer router.Close()
+			vpnSrv = maskvpn.New(maskvpn.Loader(static, cfg.VPNUsersDir), router)
+			slog.Info("maskvpn: enabled (masquerading VPN inside HTTPS)", "users", vpnSrv.Count(),
+				"path", maskvpn.Path, "subnet", cfg.VPNSubnet)
+		}
+	}
+
 	// HTTPS (behind mux)
 	httpLn := netx.NewChanListener(&net.TCPAddr{IP: net.IPv4zero, Port: cfg.HTTPSPort})
 	httpsSrv := &http.Server{
-		Handler:           web.Handler(cm.Serves, chatHandler, g.Strike),
+		Handler:           web.Handler(cm.Serves, chatHandler, vpnSrv, g.Strike),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       0, // file uploads / websockets
 		WriteTimeout:      0,

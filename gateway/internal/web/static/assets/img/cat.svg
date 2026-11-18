@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" role="img" aria-label="Кошка">
+  <rect width="400" height="300" fill="#e7dccb"/>
+  <rect width="400" height="300" fill="url(#g)"/>
+  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#f1e8d8"/><stop offset="1" stop-color="#d9cbb3"/>
+  </linearGradient></defs>
+  <g transform="translate(200,170)">
+    <g fill="#8a7a63">
+      <path d="M-70 10 L-55 -60 L-25 -20 Z"/>
+      <path d="M70 10 L55 -60 L25 -20 Z"/>
+      <ellipse cx="0" cy="25" rx="78" ry="70"/>
+      <ellipse cx="0" cy="95" rx="60" ry="40"/>
+    </g>
+    <circle cx="-28" cy="15" r="9" fill="#f5f0e6"/>
+    <circle cx="28" cy="15" r="9" fill="#f5f0e6"/>
+    <circle cx="-28" cy="15" r="4" fill="#2b2622"/>
+    <circle cx="28" cy="15" r="4" fill="#2b2622"/>
+    <path d="M-8 34 h16 l-8 10 Z" fill="#c98b7a"/>
+  </g>
+</svg>

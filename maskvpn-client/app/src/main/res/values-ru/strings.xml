@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">SecureGate VPN</string>
+    <string name="tunnels">Туннели</string>
+    <string name="add_tunnel">Добавить туннель</string>
+    <string name="scan_qr">Сканировать QR-код</string>
+    <string name="import_file">Импорт файла (.sgvpn)</string>
+    <string name="export">Экспорт</string>
+    <string name="delete">Удалить</string>
+    <string name="connect">Подключить</string>
+    <string name="disconnect">Отключить</string>
+    <string name="no_tunnels">Туннелей пока нет. Добавьте: отсканируйте QR-код из «./sgctl vpn add» или импортируйте файл .sgvpn.</string>
+    <string name="status_disconnected">Отключено</string>
+    <string name="status_connecting">Подключение…</string>
+    <string name="status_connected">Подключено</string>
+    <string name="status_error">Ошибка</string>
+    <string name="allow_self_signed">Разрешить самоподписанный сертификат (тест)</string>
+    <string name="notif_channel">Состояние VPN</string>
+    <string name="added">Туннель добавлен: %1$s</string>
+    <string name="invalid_config">Некорректный конфиг туннеля</string>
+</resources>
