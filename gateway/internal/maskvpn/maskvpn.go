@@ -36,6 +36,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -44,6 +45,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/chacha20poly1305"
@@ -260,9 +262,7 @@ func (s *Server) TryUpgrade(w http.ResponseWriter, r *http.Request, ip string) b
 		return true
 	}
 
-	if err := s.tunnel(conn, brw.Reader, u, ip); err != nil {
-		slog.Debug("maskvpn: tunnel ended", "ip", ip, "user", u.name, "err", err)
-	}
+	_ = s.tunnel(conn, brw.Reader, u, ip) // logged inside
 	return true
 }
 
@@ -297,6 +297,23 @@ func (s *Server) tunnel(conn net.Conn, r io.Reader, u *user, ip string) error {
 	defer s.router.Release(client)
 	slog.Info("maskvpn: tunnel up", "ip", ip, "user", u.name, "addr", client.ip.String())
 
+	// Traffic counters: logged when the tunnel ends, and a one-time warning if the client keeps sending
+	// but nothing ever comes back (= the host drops forwarded packets: firewall / NAT problem).
+	var upPkts, upBytes, downPkts, downBytes atomic.Int64
+	start := time.Now()
+	var tunErr error
+	defer func() {
+		reason := "closed"
+		if tunErr != nil {
+			reason = tunErr.Error()
+		}
+		slog.Info("maskvpn: tunnel down", "ip", ip, "user", u.name, "addr", client.ip.String(),
+			"duration", time.Since(start).Round(time.Second).String(),
+			"up_pkts", upPkts.Load(), "up_bytes", upBytes.Load(),
+			"down_pkts", downPkts.Load(), "down_bytes", downBytes.Load(), "reason", reason)
+	}()
+	warned := false
+
 	// Writer goroutine: owns tx and the send counter, serializes all writes to conn, and sends a
 	// keepalive so the outer TCP stays warm through the proxy / NAT.
 	done := make(chan struct{})
@@ -316,6 +333,10 @@ func (s *Server) tunnel(conn net.Conn, r io.Reader, u *user, ip string) error {
 		for {
 			select {
 			case pt := <-out:
+				if len(pt) > 0 && pt[0] == opIP {
+					downPkts.Add(1)
+					downBytes.Add(int64(len(pt) - 1))
+				}
 				if !writeFrame(pt) {
 					conn.Close()
 					return
@@ -343,25 +364,37 @@ func (s *Server) tunnel(conn net.Conn, r io.Reader, u *user, ip string) error {
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(idleTimeout))
 		if _, err := io.ReadFull(r, hdr); err != nil {
+			tunErr = err
 			return err
 		}
 		n := int(binary.BigEndian.Uint16(hdr))
 		if n == 0 || n > maxFrame {
-			return errors.New("bad frame length")
+			tunErr = errors.New("bad frame length")
+			return tunErr
 		}
 		if _, err := io.ReadFull(r, buf[:n]); err != nil {
+			tunErr = err
 			return err
 		}
 		pt, err := open(rx, &rn, buf[:n])
 		if err != nil {
-			return err
+			tunErr = fmt.Errorf("decrypt frame %d: %w (client frame order/counter mismatch)", rn, err)
+			return tunErr
 		}
 		if len(pt) == 0 {
 			continue
 		}
 		switch pt[0] {
 		case opIP:
+			upPkts.Add(1)
+			upBytes.Add(int64(len(pt) - 1))
 			s.router.WriteToTUN(pt[1:])
+			if !warned && upPkts.Load() >= 30 && downPkts.Load() == 0 && time.Since(start) > 5*time.Second {
+				warned = true
+				slog.Warn("maskvpn: client sends packets but NOTHING comes back - the host does not forward/NAT "+
+					"the VPN subnet (firewall: ufw/iptables-legacy/nftables FORWARD policy, ip_forward, VPN_SUBNET overlap)",
+					"ip", ip, "user", u.name, "addr", client.ip.String(), "up_pkts", upPkts.Load())
+			}
 		case opKeepalive, opConfig:
 			// keepalive: nothing; config from client: ignored
 		}

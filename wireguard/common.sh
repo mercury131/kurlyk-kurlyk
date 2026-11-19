@@ -48,3 +48,14 @@ apply_peer() { # add / update peer NAME on the running interface
   ip link show "$IFACE" >/dev/null 2>&1 || return 0
   wg set "$IFACE" peer "$(cat "$d/public.key")" preshared-key "$d/psk" allowed-ips "$(cat "$d/address")/32"
 }
+
+# remove the uplink kill-switch rules (wg-uplink.sh) - when the container runs as a server or the
+# kill switch is turned off
+ks_down_all() {
+  for ipt in iptables ip6tables; do
+    $ipt -w -S OUTPUT 2>/dev/null | grep -- "--comment securegate-uplink-ks" | sed 's/^-A /-D /' | while read -r r; do
+      # shellcheck disable=SC2086
+      eval "$ipt -w $r" 2>/dev/null || true
+    done
+  done
+}

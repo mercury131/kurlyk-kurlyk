@@ -89,7 +89,7 @@ func (g *Guard) exempt(ip string) bool {
 	if p == nil {
 		return false
 	}
-	if p.IsLoopback() {
+	if p.IsLoopback() || isLocalAddr(p) {
 		return true
 	}
 	if g.cfg.Exempt != nil && g.cfg.Exempt(p) {
@@ -101,6 +101,33 @@ func (g *Guard) exempt(ip string) bool {
 		}
 	}
 	return false
+}
+
+// local addresses of this host (cached): a connection from one of them originates on this host
+// itself, e.g. telemt fetching the TLS front from the gateway with its upstream bound to the
+// WireGuard uplink address (MTPROXY_UPSTREAM_IFACE). Spoofed external packets with a local source
+// address are dropped by the kernel as martians.
+var localAddrs struct {
+	sync.Mutex
+	at  time.Time
+	set map[string]bool
+}
+
+func isLocalAddr(ip net.IP) bool {
+	localAddrs.Lock()
+	defer localAddrs.Unlock()
+	if localAddrs.set == nil || time.Since(localAddrs.at) > 30*time.Second {
+		set := map[string]bool{}
+		if addrs, err := net.InterfaceAddrs(); err == nil {
+			for _, a := range addrs {
+				if n, ok := a.(*net.IPNet); ok {
+					set[n.IP.String()] = true
+				}
+			}
+		}
+		localAddrs.set, localAddrs.at = set, time.Now()
+	}
+	return localAddrs.set[ip.String()]
 }
 
 // Admit is called for every new TCP connection. It returns a release func that must be called

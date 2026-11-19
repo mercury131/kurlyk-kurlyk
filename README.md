@@ -122,6 +122,21 @@ VPN-клиенты выходят в интернет при включённо�
 (ключи те же, клиент один — меняется только `Endpoint`).
 Баны действуют на основном сервере: забаненный IP отсекается и через прокси.
 
+## MTProxy на прокси с выходом через WireGuard основного (install-wg-only.txt)
+
+Вариант из двух серверов: на ПРОКСИ работают gateway (443) + telemt + WireGuard-клиент, на ОСНОВНОМ —
+только WireGuard-сервер. Исходящие соединения telemt к Telegram идут через туннель и выходят в интернет
+с основного; остальной трафик прокси идёт как обычно.
+
+- основной: `WG_MODE=server`, `docker compose up -d --build wireguard`, `./sgctl wg add proxy1 --via <IP основного>`;
+- прокси: `WG_MODE=uplink`, `MTPROXY_UPSTREAM_IFACE=sgup0`, `./sgctl wg uplink import proxy1.conf`,
+  `docker compose up -d --build gateway mtproxy wireguard`; статус — `./sgctl wg uplink`;
+- kill-switch: с прокси в сети Telegram можно только через `sgup0` (туннель упал — прямого трафика нет);
+- `WG_AUTO_FIX=true` (на обоих, на основном + `WG_AUTO_FIX_PEERS=proxy1`) — пересоздание WG-интерфейса,
+  если через туннель нет трафика; прокси реагирует первым, после перезапуска — ожидание (grace, удваивается).
+
+Пошагово для чистых Ubuntu 22.04 — `install-wg-only.txt`.
+
 ## SSTP (Keenetic)
 
 Пользователи — `SSTP_USERS='keenetic:пароль'` (через запятую) или `config/users.yml`.

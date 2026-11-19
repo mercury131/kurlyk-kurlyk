@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -113,8 +114,15 @@ func WriteDisabled(dir, reason string) error {
 	return os.WriteFile(filepath.Join(dir, "DISABLED"), []byte(reason+"\n"), 0o644)
 }
 
+var ifaceNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,15}$`)
+
 // WriteTelemtConfig writes telemt's config.toml (telemt watches and hot-reloads it).
-func WriteTelemtConfig(dir string, enabled bool, domain string, publicPort, internalPort, maskPort int, adTag string, users map[string]string) error {
+//
+// upstreamIface (optional): telemt's outgoing connections to Telegram (DCs / middle proxies) are
+// bound to the address of this interface - the WireGuard uplink to the main server on a proxy-only
+// install (wireguard container, WG_MODE=uplink, which routes that source address into the tunnel).
+// Fail-closed: without the interface/address telemt cannot connect at all, nothing leaks directly.
+func WriteTelemtConfig(dir string, enabled bool, domain string, publicPort, internalPort, maskPort int, adTag, upstreamIface string, users map[string]string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -122,6 +130,11 @@ func WriteTelemtConfig(dir string, enabled bool, domain string, publicPort, inte
 	if !enabled || len(users) == 0 {
 		_ = os.WriteFile(marker, []byte("MTProxy disabled (MTPROXY_ENABLE=false or no users)\n"), 0o644)
 		return nil
+	}
+	if upstreamIface != "" && !ifaceNameRe.MatchString(upstreamIface) {
+		_ = os.Remove(filepath.Join(dir, "config.toml"))
+		_ = os.WriteFile(marker, []byte("MTProxy disabled: invalid MTPROXY_UPSTREAM_IFACE\n"), 0o644)
+		return fmt.Errorf("MTPROXY_UPSTREAM_IFACE=%q is not a valid interface name", upstreamIface)
 	}
 	_ = os.Remove(marker)
 	names := make([]string, 0, len(users))
@@ -150,6 +163,13 @@ func WriteTelemtConfig(dir string, enabled bool, domain string, publicPort, inte
 	// after a DOMAIN change, subdomain vs apex): telemt's default "drop" made Telegram show the
 	// proxy as unavailable ("TLS handshake rejected by unknown SNI policy"). Accept any SNI.
 	b.WriteString("unknown_sni_action = \"accept\"\n")
+	if upstreamIface != "" {
+		// Outgoing connections are bound to the uplink interface's address; the wireguard container
+		// routes that source address into the tunnel (policy rule). IPv4 only (the tunnel carries
+		// IPv4). The TLS-front fetch from mask_host (127.0.0.1) also goes through the upstream: a local
+		// source address still reaches loopback, so tls_emulation keeps working.
+		fmt.Fprintf(&b, "\n[[upstreams]]\ntype = \"direct\"\ninterface = %q\nipv4 = true\nipv6 = false\n", upstreamIface)
+	}
 	b.WriteString("\n[access.users]\n")
 	for _, n := range names {
 		fmt.Fprintf(&b, "%q = %q\n", n, strings.ToLower(users[n]))

@@ -29,8 +29,20 @@ stop() {
 trap stop TERM INT
 
 sum() { md5sum "$CONF" 2>/dev/null | cut -d' ' -f1; }
+# MTPROXY_UPSTREAM_IFACE (gateway -> [[upstreams]] interface = "...", e.g. the WireGuard uplink
+# sgup0): telemt's outgoing connections need that interface, wait for it before (re)starting.
+wait_iface() {
+  IF=$(sed -n 's/^interface = "\(.*\)"$/\1/p' "$CONF" | head -n1)
+  [ -n "$IF" ] || return 0
+  [ -e "/sys/class/net/$IF" ] && return 0
+  echo "telemt: waiting for upstream interface $IF (wireguard container, WG_MODE=uplink)"
+  while [ ! -e "/sys/class/net/$IF" ]; do sleep 2; done
+  sleep 2
+  echo "telemt: interface $IF is up"
+}
 
 while true; do
+  wait_iface
   CUR=$(sum)
   echo "telemt: starting with $CONF"
   telemt run "$CONF" --data-path /etc/telemt &

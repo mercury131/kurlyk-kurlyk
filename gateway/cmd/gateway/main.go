@@ -97,7 +97,7 @@ func main() {
 	// MTProxy: telemt on :443 + alternative implementations on their own ports, same users
 	var mt *mtproxy.Forwarder
 	if err := mtproxy.WriteTelemtConfig(cfg.MTConfigDir, cfg.MTEnable, cfg.Domain, cfg.HTTPSPort,
-		cfg.MTInternalPort, cfg.HTTPSPort, cfg.MTAdTag, cfg.MTUsers); err != nil {
+		cfg.MTInternalPort, cfg.HTTPSPort, cfg.MTAdTag, cfg.MTUpstreamIface, cfg.MTUsers); err != nil {
 		slog.Error("mtproxy: cannot write telemt config", "err", err)
 	}
 	type altPort struct {

@@ -9,7 +9,6 @@ import java.security.cert.X509Certificate
 import java.util.Base64
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
-import javax.net.ssl.SSLParameters
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
@@ -53,7 +52,12 @@ class MaskVpnSession(
         raw.tcpNoDelay = true
         val s = ctx.socketFactory.createSocket(raw, cfg.sni, cfg.port, true) as SSLSocket
         // SNI = the configured name (masquerade as a browser visiting the cover site).
-        s.sslParameters = SSLParameters().apply { serverNames = listOf(javax.net.ssl.SNIHostName(cfg.sni)) }
+        s.sslParameters = s.sslParameters.apply {
+            serverNames = listOf(javax.net.ssl.SNIHostName(cfg.sni))
+            // A plain SSLSocket does not check the host name; with a CA-verified certificate also verify
+            // that it was issued for the SNI (otherwise any valid certificate for any domain is accepted).
+            if (!allowSelfSigned) endpointIdentificationAlgorithm = "HTTPS"
+        }
         s.startHandshake()
         sock = s
         input = DataInputStream(s.inputStream.buffered())
@@ -102,11 +106,17 @@ class MaskVpnSession(
     private fun writeFrame(op: Int, payload: ByteArray) {
         val pt = ByteArray(1 + payload.size)
         pt[0] = op.toByte(); System.arraycopy(payload, 0, pt, 1, payload.size)
-        val ct = tx.seal(pt)
-        val frame = ByteArray(2 + ct.size)
-        frame[0] = (ct.size ushr 8).toByte(); frame[1] = ct.size.toByte()
-        System.arraycopy(ct, 0, frame, 2, ct.size)
-        synchronized(writeLock) { output.write(frame); output.flush() }
+        // Seal AND write under one lock: the AEAD nonce is an implicit counter, so frames must reach the
+        // server in exactly the order they were sealed. (Before, the packet pump and the keepalive thread
+        // could seal n and n+1 and then write n+1 first -> the server failed to decrypt and dropped the
+        // tunnel; the counter itself was also incremented without synchronization.)
+        synchronized(writeLock) {
+            val ct = tx.seal(pt)
+            val frame = ByteArray(2 + ct.size)
+            frame[0] = (ct.size ushr 8).toByte(); frame[1] = ct.size.toByte()
+            System.arraycopy(ct, 0, frame, 2, ct.size)
+            output.write(frame); output.flush()
+        }
     }
 
     /** Send one IPv4 packet into the tunnel. */

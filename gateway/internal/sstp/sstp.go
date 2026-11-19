@@ -21,6 +21,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"securegate/internal/fw"
 )
 
 const (
@@ -553,13 +555,6 @@ func ensurePPPDevice() {
 	}
 }
 
-func ipt(args ...string) error {
-	out, err := exec.Command("iptables", append([]string{"-w"}, args...)...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("iptables %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
 
 func natRules(pool string) [][]string {
 	return [][]string{
@@ -583,26 +578,27 @@ func setupNAT(pool string) error {
 	if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0o644); err != nil {
 		slog.Warn("sstp: cannot enable ip_forward", "err", err)
 	}
-	for _, r := range natRules(pool) {
-		t, chain, spec := split(r)
-		check := append(append(append([]string{}, t...), "-C", chain), spec...)
-		if ipt(check...) == nil {
-			continue
-		}
-		ins := append(append(append([]string{}, t...), "-I", chain, "1"), spec...)
-		if err := ipt(ins...); err != nil {
-			return err
-		}
+	if _, err := fw.Ensure(fwRules(pool)); err != nil {
+		return err
 	}
 	slog.Info("sstp: NAT/forwarding rules installed", "pool", pool)
 	return nil
 }
 
 func teardownNAT(pool string) {
+	fw.Remove(fwRules(pool))
+}
+
+// fwRules converts natRules to fw rules (installed in every iptables backend the host uses).
+func fwRules(pool string) []fw.Rule {
+	var out []fw.Rule
 	for _, r := range natRules(pool) {
 		t, chain, spec := split(r)
-		del := append(append(append([]string{}, t...), "-D", chain), spec...)
-		for i := 0; i < 5 && ipt(del...) == nil; i++ {
+		table := ""
+		if len(t) == 2 {
+			table = t[1]
 		}
+		out = append(out, fw.Rule{Table: table, Chain: chain, Spec: spec})
 	}
+	return out
 }

@@ -57,6 +57,9 @@ type Config struct {
 	MTInternalPort int
 	MTConfigDir    string
 	MTAdTag        string
+	// MTUpstreamIface: network interface for telemt's outgoing connections to Telegram
+	// (e.g. the WireGuard uplink sgup0 to the main server). Empty = default route.
+	MTUpstreamIface string
 	// Alternative MTProxy implementations on their own public ports, same users (MTUsers).
 	// Port 0 = disabled. The gateway listens on the public port (same detector as :443) and
 	// forwards authenticated Telegram clients to 127.0.0.1:<internal port>.
@@ -220,11 +223,12 @@ func Load() (*Config, error) {
 		SSTPPPPDebug: envBool("SSTP_PPP_DEBUG", false),
 		PPPDPath:     env("PPPD_PATH", "/usr/sbin/pppd"),
 
-		MTEnable:       envBool("MTPROXY_ENABLE", true),
-		MTUsers:        map[string]string{},
-		MTInternalPort: envInt("MTPROXY_INTERNAL_PORT", 8443),
-		MTConfigDir:    env("MTPROXY_CONFIG_DIR", "/data/mtproxy"),
-		MTAdTag:        env("MTPROXY_AD_TAG", ""),
+		MTEnable:        envBool("MTPROXY_ENABLE", true),
+		MTUsers:         map[string]string{},
+		MTInternalPort:  envInt("MTPROXY_INTERNAL_PORT", 8443),
+		MTConfigDir:     env("MTPROXY_CONFIG_DIR", "/data/mtproxy"),
+		MTAdTag:         env("MTPROXY_AD_TAG", ""),
+		MTUpstreamIface: strings.TrimSpace(env("MTPROXY_UPSTREAM_IFACE", "")),
 		MTAlt: []MTAltImpl{
 			{Name: "mtprotoproxy", Enable: envBool("MTPROTOPROXY_ENABLE", true),
 				Port: envInt("MTPROTOPROXY_PORT", 2053), InternalPort: envInt("MTPROTOPROXY_INTERNAL_PORT", 8444)},

@@ -29,6 +29,9 @@ class MaskVpnService : VpnService() {
     @Volatile private var worker: Thread? = null
     @Volatile private var session: MaskVpnSession? = null
     @Volatile private var tun: ParcelFileDescriptor? = null
+    // Generation of the current worker: an old worker that is still unwinding must not touch the state
+    // of a newer one (reconnect / switching tunnels).
+    @Volatile private var gen = 0
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -44,33 +47,38 @@ class MaskVpnService : VpnService() {
     }
 
     private fun startTunnel(cfg: TunnelConfig, allowSelfSigned: Boolean) {
-        if (worker != null) stopTunnel()
+        // Switching/reconnecting: tear down the old worker WITHOUT stopSelf() (that destroyed the service,
+        // and onDestroy then stopped the new worker too).
+        if (worker != null) teardown()
         userStop = false
+        val my = ++gen
         startForeground(NOTIF_ID, notification(getString(R.string.status_connecting), cfg.name))
         VpnState.connecting(cfg.name)
-        worker = thread(name = "maskvpn") { runLoop(cfg, allowSelfSigned) }
+        worker = thread(name = "maskvpn") { runLoop(cfg, allowSelfSigned, my) }
     }
 
-    private fun runLoop(cfg: TunnelConfig, allowSelfSigned: Boolean) {
+    private fun alive(my: Int) = !userStop && gen == my
+
+    private fun runLoop(cfg: TunnelConfig, allowSelfSigned: Boolean, my: Int) {
         var backoff = 1000L
-        while (!userStop) {
+        while (alive(my)) {
             try {
                 VpnState.connecting(cfg.name)
-                runOnce(cfg, allowSelfSigned)
+                runOnce(cfg, allowSelfSigned, my)
                 backoff = 1000L // a clean end still reconnects unless the user stopped
             } catch (e: Throwable) {
-                if (userStop) break
+                if (!alive(my)) break
                 VpnState.error(cfg.name, e.message ?: e.javaClass.simpleName)
-                notify(getString(R.string.status_error), cfg.name)
+                notify(getString(R.string.status_error), "${cfg.name}: ${e.message ?: e.javaClass.simpleName}")
             }
-            if (userStop) break
+            if (!alive(my)) break
             try { Thread.sleep(backoff) } catch (_: InterruptedException) { break }
             backoff = (backoff * 2).coerceAtMost(30000L)
         }
-        VpnState.disconnected()
+        if (gen == my) VpnState.disconnected()
     }
 
-    private fun runOnce(cfg: TunnelConfig, allowSelfSigned: Boolean) {
+    private fun runOnce(cfg: TunnelConfig, allowSelfSigned: Boolean, my: Int) {
         val s = MaskVpnSession(cfg, allowSelfSigned = allowSelfSigned, protect = { sock -> protect(sock) })
         session = s
         val sc = s.connect()
@@ -92,7 +100,7 @@ class MaskVpnService : VpnService() {
         val up = thread(name = "maskvpn-up") {
             val buf = ByteArray(32767)
             try {
-                while (!userStop) {
+                while (alive(my)) {
                     val n = fin.read(buf)
                     if (n <= 0) break
                     s.writePacket(buf.copyOf(n))
@@ -101,11 +109,11 @@ class MaskVpnService : VpnService() {
         }
         // keepalive
         val ka = thread(name = "maskvpn-ka") {
-            try { while (!userStop) { Thread.sleep(20000); s.keepAlive() } } catch (_: Throwable) {}
+            try { while (alive(my)) { Thread.sleep(20000); s.keepAlive() } } catch (_: Throwable) {}
         }
         // server -> device (this thread)
         try {
-            while (!userStop) {
+            while (alive(my)) {
                 val (op, pkt) = s.readFrame()
                 if (op == Op.IP && pkt.isNotEmpty()) fout.write(pkt)
             }
@@ -113,16 +121,21 @@ class MaskVpnService : VpnService() {
             runCatching { s.close() }
             up.interrupt(); ka.interrupt()
             runCatching { pfd.close() }
-            tun = null
+            if (tun === pfd) tun = null
         }
     }
 
-    private fun stopTunnel() {
+    private fun teardown() {
         userStop = true
+        gen++
         runCatching { session?.close() }
         runCatching { tun?.close() }
         worker?.interrupt()
         worker = null
+    }
+
+    private fun stopTunnel() {
+        teardown()
         VpnState.disconnected()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

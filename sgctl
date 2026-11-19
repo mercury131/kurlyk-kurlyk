@@ -6,6 +6,8 @@
 #   ./sgctl wg conf <name> [--via <host>]   print only the config (> name.conf)
 #   ./sgctl wg list                         clients, addresses, last handshake, traffic
 #   ./sgctl wg remove <name>                delete a client
+#   ./sgctl wg uplink [import <file>]       WG_MODE=uplink (proxy-only server): tunnel status /
+#                                           install the client config made on the main server
 #   ./sgctl mtproxy [user]                  MTProxy links (all implementations / domains)
 #   ./sgctl mtproxy qr <user> [impl] [host] QR code of a tg:// link
 #   ./sgctl vpn add <name> [--via <host>]   masquerading-VPN user: config + QR for the app
@@ -28,7 +30,7 @@
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 
-usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
 
 env_val() { # value of KEY from .env (last assignment wins, quotes stripped); empty if absent
   [ -f .env ] || return 0
@@ -82,7 +84,40 @@ admin_container() {
   else echo "neither securegate-gateway nor securegate-proxy is running" >&2; exit 1; fi
 }
 
+is_uplink() { case "$(env_val WG_MODE | tr 'A-Z' 'a-z')" in uplink|client) return 0;; esac; return 1; }
+
+# WG_MODE=uplink: this server is a WireGuard client of the main server (telemt -> tunnel -> main)
+wg_uplink() {
+  local f=data/wireguard/uplink.conf iface
+  iface=$(env_val WG_UPLINK_IFACE); iface=${iface:-sgup0}
+  case "${1:-status}" in
+    import)
+      local src=${2:?usage: ./sgctl wg uplink import <file.conf>   (made on the main: ./sgctl wg conf <name> --via <main IP>)}
+      [ -f "$src" ] || { echo "no such file: $src"; exit 1; }
+      grep -qi '^[[:space:]]*PrivateKey' "$src" && grep -qi '^[[:space:]]*Endpoint' "$src" ||
+        { echo "$src is not a WireGuard client config (needs PrivateKey and Endpoint)"; exit 1; }
+      mkdir -p data/wireguard
+      install -m 600 "$src" "$f"
+      echo "installed $f"
+      is_uplink || echo "NOTE: set WG_MODE=uplink in .env, then: ./sgctl compose up -d wireguard"
+      if running securegate-wireguard; then docker restart securegate-wireguard >/dev/null && echo "wireguard container restarted"; fi
+      ;;
+    status)
+      running securegate-wireguard || { echo "wireguard container is not running"; exit 1; }
+      is_uplink || echo "NOTE: WG_MODE is not 'uplink' in .env"
+      docker exec securegate-wireguard sh -c "wg show $iface 2>/dev/null || echo 'interface $iface is not up'; echo; echo '# policy routing (only this source address goes into the tunnel):'; ip rule show | grep -E 'lookup ${WG_UPLINK_TABLE:-51821}' ; ip route show table ${WG_UPLINK_TABLE:-51821}"
+      echo; docker logs --tail 200 securegate-wireguard 2>&1 | grep 'wireguard-uplink' | tail -n 5
+      ;;
+    *) echo "usage: ./sgctl wg uplink [status | import <file.conf>]"; exit 2 ;;
+  esac
+}
+
 need_main() {
+  if is_uplink; then
+    echo "WG_MODE=uplink: this server is a WireGuard CLIENT of the main server; clients are created there."
+    echo "Tunnel status: ./sgctl wg uplink      install config: ./sgctl wg uplink import <file.conf>"
+    exit 1
+  fi
   if is_proxy; then
     echo "This server runs in PROXY mode: WireGuard clients are created on the MAIN server ($(env_val DOMAIN_TO_PROXY))."
     echo "There:  ./sgctl wg add <name> --via $(env_val DOMAIN)     (config that connects through this proxy)"
@@ -97,6 +132,7 @@ need_main() {
 cmd=${1:-help}; [ $# -gt 0 ] && shift
 case "$cmd" in
   wg|wireguard)
+    if [ "${1:-}" = uplink ]; then shift; wg_uplink "$@"; exit 0; fi
     need_main
     dexec securegate-wireguard wgctl "$@"
     ;;

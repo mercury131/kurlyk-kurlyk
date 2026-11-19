@@ -14,8 +14,11 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"golang.org/x/sys/unix"
+
+	"securegate/internal/fw"
 )
 
 const (
@@ -47,6 +50,8 @@ type Router struct {
 	serverIP net.IP
 	ipnet    *net.IPNet
 	dns      []string
+	stop      chan struct{}
+	closeOnce sync.Once
 
 	mu    sync.Mutex
 	used  map[byte]*tunClient // last octet -> client
@@ -75,13 +80,14 @@ func NewRouter(subnetCIDR string, dns []string) (*Router, error) {
 		return nil, err
 	}
 	r := &Router{tun: f, serverIP: server, ipnet: ipnet, dns: dns,
-		used: map[byte]*tunClient{}, byIP: map[uint32]*tunClient{}, nextN: 2}
+		used: map[byte]*tunClient{}, byIP: map[uint32]*tunClient{}, nextN: 2, stop: make(chan struct{})}
 	_ = ip
 	if err := r.configure(); err != nil {
 		f.Close()
 		return nil, err
 	}
 	go r.readLoop()
+	go r.keepFirewall()
 	slog.Info("maskvpn: TUN ready", "iface", tunIface, "server", server.String(), "subnet", subnetCIDR, "mtu", tunMTU)
 	return r, nil
 }
@@ -103,69 +109,63 @@ func (r *Router) configure() error {
 	if err := run("ip", "link", "set", tunIface, "mtu", fmt.Sprintf("%d", tunMTU), "up"); err != nil {
 		return err
 	}
-	r.firewall("-D") // clean stale rules first
+	r.firewall("-D") // clean stale rules first (any backend)
 	r.firewall("-I")
 	return nil
 }
 
-// firewall installs (-I) or removes (-D) the NAT/forward rules, tagged so they are easy to find and
-// do not clash with the host's own rules. Mirrors the WireGuard container.
-func (r *Router) firewall(op string) {
+// rules are the NAT/forward rules for the VPN subnet, tagged so they are easy to find and do not clash
+// with the host's own rules. Mirrors the WireGuard container.
+func (r *Router) rules() []fw.Rule {
 	sub := r.ipnet.String()
-	rules := [][]string{
-		{"-t", "nat", "POSTROUTING", "-s", sub, "!", "-d", sub, "-j", "MASQUERADE"},
-		{"FORWARD", "-i", tunIface, "-j", "ACCEPT"},
-		{"FORWARD", "-o", tunIface, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
-		{"-t", "mangle", "FORWARD", "-i", tunIface, "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
-			"-j", "TCPMSS", "--clamp-mss-to-pmtu"},
-		{"-t", "mangle", "FORWARD", "-o", tunIface, "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
-			"-j", "TCPMSS", "--clamp-mss-to-pmtu"},
+	tag := []string{"-m", "comment", "--comment", ruleTag}
+	mk := func(table, chain string, spec ...string) fw.Rule {
+		return fw.Rule{Table: table, Chain: chain, Spec: append(spec, tag...)}
 	}
-	for _, rl := range rules {
-		args := []string{"-w"}
-		table := ""
-		if rl[0] == "-t" {
-			table = rl[1]
-			args = append(args, "-t", rl[1])
-			rl = rl[2:]
-		}
-		chain := rl[0]
-		rest := rl[1:]
-		if op == "-I" {
-			// delete a possible duplicate, then insert on top
-			del := append(append([]string{"-w"}, tableArgs(table)...), "-D", chain)
-			del = append(del, rest...)
-			del = append(del, "-m", "comment", "--comment", ruleTag)
-			_ = exec.Command("iptables", del...).Run()
-			ins := append(args, "-I", chain, "1")
-			ins = append(ins, rest...)
-			ins = append(ins, "-m", "comment", "--comment", ruleTag)
-			if out, err := exec.Command("iptables", ins...).CombinedOutput(); err != nil {
-				slog.Warn("maskvpn: iptables insert failed", "args", ins, "err", err, "out", string(out))
-			}
-		} else {
-			for i := 0; i < 8; i++ {
-				del := append(args[:1:1], tableArgs(table)...)
-				del = append(del, "-D", chain)
-				del = append(del, rest...)
-				del = append(del, "-m", "comment", "--comment", ruleTag)
-				if exec.Command("iptables", del...).Run() != nil {
-					break
-				}
-			}
-		}
+	return []fw.Rule{
+		mk("nat", "POSTROUTING", "-s", sub, "!", "-d", sub, "-j", "MASQUERADE"),
+		mk("", "FORWARD", "-i", tunIface, "-j", "ACCEPT"),
+		mk("", "FORWARD", "-o", tunIface, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"),
+		mk("mangle", "FORWARD", "-i", tunIface, "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu"),
+		mk("mangle", "FORWARD", "-o", tunIface, "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu"),
 	}
 }
 
-func tableArgs(t string) []string {
-	if t == "" {
-		return nil
+// firewall installs (-I) or removes (-D) the rules in every iptables backend the host uses (see fw).
+func (r *Router) firewall(op string) {
+	if op != "-I" {
+		fw.Remove(r.rules())
+		return
 	}
-	return []string{"-t", t}
+	if n, err := fw.Ensure(r.rules()); err != nil {
+		slog.Warn("maskvpn: iptables insert failed", "err", err)
+	} else if n > 0 {
+		slog.Info("maskvpn: NAT/forward rules installed", "rules", n, "backends", fw.Backends())
+	}
+}
+
+// keepFirewall re-checks the rules every minute: a firewall reload (ufw enable/reload, docker
+// restart, a WireGuard script) may flush or bypass them, and ufw may be enabled after our start.
+func (r *Router) keepFirewall() {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-r.stop:
+			return
+		case <-t.C:
+			if n, err := fw.Ensure(r.rules()); err != nil {
+				slog.Warn("maskvpn: iptables re-check failed", "err", err)
+			} else if n > 0 {
+				slog.Warn("maskvpn: NAT/forward rules were missing, re-installed", "rules", n)
+			}
+		}
+	}
 }
 
 // Close removes the firewall rules and the interface.
 func (r *Router) Close() {
+	r.closeOnce.Do(func() { close(r.stop) })
 	r.firewall("-D")
 	if r.tun != nil {
 		r.tun.Close()

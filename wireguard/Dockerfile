@@ -11,10 +11,11 @@ RUN go install -ldflags="-s -w" golang.zx2c4.com/wireguard@v0.0.0-20261024220952
 FROM alpine:3.20
 COPY --from=wggo /go/bin/wireguard /usr/local/bin/wireguard-go
 RUN set -eux; \
-    apk add --no-cache wireguard-tools-wg iptables iproute2 libqrencode-tools kmod; \
+    apk add --no-cache wireguard-tools-wg iptables iptables-legacy iproute2 libqrencode-tools kmod; \
     wg --version; iptables -V; qrencode -V
 COPY entrypoint.sh /entrypoint.sh
 COPY common.sh /usr/local/bin/wg-common.sh
+COPY uplink.sh /usr/local/bin/wg-uplink.sh
 COPY wgctl /usr/local/bin/wgctl
-RUN chmod 755 /entrypoint.sh /usr/local/bin/wgctl
+RUN chmod 755 /entrypoint.sh /usr/local/bin/wgctl /usr/local/bin/wg-uplink.sh
 ENTRYPOINT ["/entrypoint.sh"]
