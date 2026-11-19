@@ -8,6 +8,7 @@
 #   ./sgctl wg remove <name>                delete a client
 #   ./sgctl wg uplink [import <file>]       WG_MODE=uplink (proxy-only server): tunnel status /
 #                                           install the client config made on the main server
+#                                           (+ WG_UPLINK_RELAY=true: relays clients of the main)
 #   ./sgctl mtproxy [user]                  MTProxy links (all implementations / domains)
 #   ./sgctl mtproxy qr <user> [impl] [host] QR code of a tg:// link
 #   ./sgctl vpn add <name> [--via <host>]   masquerading-VPN user: config + QR for the app
@@ -85,6 +86,12 @@ admin_container() {
 }
 
 is_uplink() { case "$(env_val WG_MODE | tr 'A-Z' 'a-z')" in uplink|client) return 0;; esac; return 1; }
+is_relay() { case "$(env_val WG_UPLINK_RELAY | tr 'A-Z' 'a-z')" in 1|true|yes|on) return 0;; esac; return 1; }
+relay_port() { # WG_UPLINK_RELAY_PORT, default: the main's port = Endpoint port in data/wireguard/uplink.conf
+  local p; p=$(env_val WG_UPLINK_RELAY_PORT)
+  [ -n "$p" ] || p=$(sed -n 's/^[[:space:]]*Endpoint[[:space:]]*=.*:\([0-9][0-9]*\)[[:space:]]*$/\1/Ip' data/wireguard/uplink.conf 2>/dev/null | head -n1)
+  echo "${p:-51820}"
+}
 
 # WG_MODE=uplink: this server is a WireGuard client of the main server (telemt -> tunnel -> main)
 wg_uplink() {
@@ -106,7 +113,13 @@ wg_uplink() {
       running securegate-wireguard || { echo "wireguard container is not running"; exit 1; }
       is_uplink || echo "NOTE: WG_MODE is not 'uplink' in .env"
       docker exec securegate-wireguard sh -c "wg show $iface 2>/dev/null || echo 'interface $iface is not up'; echo; echo '# policy routing (only this source address goes into the tunnel):'; ip rule show | grep -E 'lookup ${WG_UPLINK_TABLE:-51821}' ; ip route show table ${WG_UPLINK_TABLE:-51821}"
-      echo; docker logs --tail 200 securegate-wireguard 2>&1 | grep 'wireguard-uplink' | tail -n 5
+      if is_relay; then
+        echo; echo "# relay of WireGuard clients (WG_UPLINK_RELAY=true): udp/$(relay_port) on this host -> main"
+        docker exec securegate-wireguard sh -c 'iptables -t nat -S PREROUTING; iptables -S FORWARD' | grep securegate-uplink-relay || echo 'relay rules are NOT installed (see: docker logs securegate-wireguard | grep relay)'
+      else
+        echo; echo "# relay of WireGuard clients: off (WG_UPLINK_RELAY=true in .env to accept clients of the main here)"
+      fi
+      echo; docker logs --tail 200 securegate-wireguard 2>&1 | grep 'wireguard-uplink' | tail -n 6
       ;;
     *) echo "usage: ./sgctl wg uplink [status | import <file.conf>]"; exit 2 ;;
   esac
@@ -116,6 +129,12 @@ need_main() {
   if is_uplink; then
     echo "WG_MODE=uplink: this server is a WireGuard CLIENT of the main server; clients are created there."
     echo "Tunnel status: ./sgctl wg uplink      install config: ./sgctl wg uplink import <file.conf>"
+    if is_relay; then
+      echo "Client configs that connect through this proxy (WG_UPLINK_RELAY=true, udp/$(relay_port)) - on the MAIN:"
+      echo "  ./sgctl wg add <name> --via $(env_val DOMAIN)      (or WG_ENDPOINT=$(env_val DOMAIN) in the main's .env)"
+    else
+      echo "To accept WireGuard clients of the main here: WG_UPLINK_RELAY=true in .env + ./sgctl compose up -d wireguard"
+    fi
     exit 1
   fi
   if is_proxy; then

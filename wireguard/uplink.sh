@@ -10,6 +10,8 @@
 # through the main server, while clients, ACME, SSH etc. keep using the normal route.
 # Fail-closed: the table also holds a blackhole default route, so with the tunnel down nothing with
 # the tunnel source address goes out directly.
+# WG_UPLINK_RELAY=true: also forwards UDP WG_UPLINK_RELAY_PORT (default: the main's port) to the main, so
+# WireGuard clients of the main connect through this proxy (see relay_sync below).
 . /usr/local/bin/wg-common.sh
 
 UP_IFACE=${WG_UPLINK_IFACE:-sgup0}
@@ -89,11 +91,53 @@ ks_up() {
   done
 }
 
+# ---- WG_UPLINK_RELAY: WireGuard CLIENTS of the main connect through this proxy ----
+# UDP WG_UPLINK_RELAY_PORT (default: the main's port from uplink.conf) arriving at this host is DNAT-ed
+# to the main's WireGuard endpoint (the Endpoint of uplink.conf, as resolved by wg) and MASQUERADE-d:
+# the main sees every client as this proxy's IP (its firewall only has to allow the proxy), clients see only the proxy.
+# The client configs are made on the main with  ./sgctl wg add <name> --via <proxy domain>.
+# Plain UDP forwarding (not through sgup0): no double encapsulation, the client MTU stays the same.
+# Rules (comment securegate-uplink-relay, both iptables backends, on top of the chains so ufw/docker
+# FORWARD policies do not block them) are re-checked every loop and removed when the container stops.
+RELAY=false; is_true "${WG_UPLINK_RELAY:-false}" && RELAY=true
+RELAY_PORT=${WG_UPLINK_RELAY_PORT:-${EP##*:}}   # default: the main's WG port (= port in the client configs)
+RELAY_TO=""     # main ip:port the rules point at
+relay_rules() {
+  _mip=${RELAY_TO%:*}; _mp=${RELAY_TO##*:}
+  cat <<R
+-t nat PREROUTING -p udp --dport $RELAY_PORT ! -s $_mip -m addrtype --dst-type LOCAL -j DNAT --to-destination $_mip:$_mp
+-t nat POSTROUTING -p udp -d $_mip --dport $_mp -m conntrack --ctstate DNAT -j MASQUERADE
+FORWARD -p udp -d $_mip --dport $_mp -m conntrack --ctstate DNAT -j ACCEPT
+FORWARD -p udp -s $_mip --sport $_mp -m conntrack --ctstate DNAT -j ACCEPT
+R
+}
+relay_target() { # current endpoint of the main (ip:port), IPv4 only
+  _ep=$(wg show "$UP_IFACE" endpoints 2>/dev/null | awk 'NR==1{print $2}')
+  case "$_ep" in "(none)"|"") _ep=$EP ;; esac
+  echo "$_ep" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$' || true
+}
+relay_sync() {
+  $RELAY || return 0
+  _to=$(relay_target)
+  if [ -z "$_to" ]; then
+    [ "$RELAY_TO" = "?" ] || log "relay: WARNING main endpoint is not an IPv4 address yet ($EP) - relay inactive"
+    RELAY_TO="?"; return 0
+  fi
+  if [ "$_to" != "$RELAY_TO" ]; then
+    ipt_purge_tag "$RELAY_TAG"
+    RELAY_TO=$_to
+    log "relay: udp/$RELAY_PORT on this host -> $RELAY_TO (WireGuard clients of the main: ./sgctl wg add <name> --via ${DOMAIN:-<this proxy>} on the main)"
+  fi
+  echo 1 > /proc/sys/net/ipv4/ip_forward 2>/dev/null || sysctl -qw net.ipv4.ip_forward=1 2>/dev/null || true
+  ipt_apply -I "$RELAY_TAG" relay_rules
+}
+
 WGGO=""
 cleanup() {
   ip link del "$UP_IFACE" 2>/dev/null || true
   [ -n "$WGGO" ] && kill "$WGGO" 2>/dev/null
   rules_down
+  ipt_purge_tag "$RELAY_TAG"
   rm -f "$keyfile" "$pskfile"
 }
 
@@ -133,6 +177,7 @@ fi
 trap 'cleanup; exit 0' TERM INT
 iface_up || { log "retry in 15s"; cleanup; sleep 15; exit 1; }
 log "up iface=$UP_IFACE addr=$ADDR endpoint=$EP table=$UP_TABLE (only traffic from $ADDR uses the tunnel)"
+if $RELAY; then relay_sync; else ipt_purge_tag "$RELAY_TAG"; fi
 
 # ---- health + WG_AUTO_FIX ----
 # Check = ping of the main's tunnel address ($GW) from our tunnel address. With WG_AUTO_FIX=true the
@@ -150,6 +195,7 @@ while :; do
   ip link show "$UP_IFACE" >/dev/null 2>&1 || { log "interface disappeared - restarting"; cleanup; exit 1; }
   rules_up
   is_true "${WG_UPLINK_KILLSWITCH:-true}" && ks_up
+  relay_sync
   hs=$(wg show "$UP_IFACE" latest-handshakes | awk '{print $2}')
   now=$(date +%s)
   ok=false

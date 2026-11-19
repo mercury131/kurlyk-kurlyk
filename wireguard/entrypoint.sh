@@ -8,7 +8,7 @@ idle() { echo "wireguard: $1. Idle."; trap 'exit 0' TERM INT; while :; do sleep 
 # WG_MODE=uplink: WireGuard CLIENT of the main server (proxy-only install: telemt -> tunnel -> main)
 case "$(echo "${WG_MODE:-server}" | tr 'A-Z' 'a-z')" in
   uplink|client) exec /usr/local/bin/wg-uplink.sh ;;
-  server|"") ks_down_all ;;   # leftover uplink kill switch of a previous WG_MODE=uplink
+  server|"") ks_down_all; ipt_purge_tag "$RELAY_TAG" ;;   # leftovers of a previous WG_MODE=uplink
   *) echo "wireguard: unknown WG_MODE=$WG_MODE (server | uplink)"; exit 1 ;;
 esac
 if is_true "${PROXY:-false}"; then
@@ -36,34 +36,7 @@ FORWARD -o $IFACE -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 -t mangle FORWARD -o $IFACE -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
 R
 }
-# iptables backends to use. The kernel applies BOTH the nf_tables and the legacy rule sets and drops a
-# packet if either drops it; on hosts whose ufw/docker/WG scripts use iptables-legacy (Ubuntu 20.04,
-# older Debian/CentOS) the FORWARD DROP policy lives in the legacy tables, so our rules go there too.
-ipt_bins() { # $1 = -I (backends in use) | -D (every loaded backend)
-  echo iptables
-  iptables -V 2>/dev/null | grep -q legacy && return 0
-  command -v iptables-legacy >/dev/null 2>&1 || return 0
-  grep -q . /proc/net/ip_tables_names 2>/dev/null || return 0
-  if [ "$1" = "-D" ]; then echo iptables-legacy; return 0; fi
-  iptables-legacy-save 2>/dev/null | grep -qE '^-A |^:[A-Z]+ (DROP|REJECT)' && echo iptables-legacy
-  return 0
-}
-ipt_each() { # $1 = -I (add if missing) | -D (delete)
-  op=$1
-  for IPT in $(ipt_bins "$op"); do
-    rules | while read -r l; do
-      # shellcheck disable=SC2086
-      set -- $l
-      if [ "$1" = "-t" ]; then t="-t $2"; shift 2; else t=""; fi
-      chain=$1; shift
-      if [ "$op" = "-I" ]; then
-        $IPT -w $t -C "$chain" "$@" -m comment --comment $TAG 2>/dev/null ||           $IPT -w $t -I "$chain" 1 "$@" -m comment --comment $TAG || echo "wireguard: $IPT failed: $t $chain $*"
-      else
-        while $IPT -w $t -D "$chain" "$@" -m comment --comment $TAG 2>/dev/null; do :; done
-      fi
-    done
-  done
-}
+ipt_each() { ipt_apply "$1" "$TAG" rules; }   # $1 = -I (add if missing) | -D (delete); helpers in wg-common.sh
 cleanup() {
   ipt_each -D
   ip link del "$IFACE" 2>/dev/null || true

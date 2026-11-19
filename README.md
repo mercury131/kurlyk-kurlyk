@@ -134,8 +134,10 @@ VPN-клиенты выходят в интернет при включённо�
 - kill-switch: с прокси в сети Telegram можно только через `sgup0` (туннель упал — прямого трафика нет);
 - `WG_AUTO_FIX=true` (на обоих, на основном + `WG_AUTO_FIX_PEERS=proxy1`) — пересоздание WG-интерфейса,
   если через туннель нет трафика; прокси реагирует первым, после перезапуска — ожидание (grace, удваивается).
+- WireGuard-клиенты (QR) через прокси: на прокси `WG_UPLINK_RELAY=true` (UDP 51820 пересылается на основной,
+  DNAT + MASQUERADE), на основном `WG_ENDPOINT=<домен прокси>` и `./sgctl wg add phone1`.
 
-Пошагово для чистых Ubuntu 22.04 — `install-wg-only.txt`.
+Пошагово для чистых Ubuntu 22.04 — `install-wg-only.txt`; обновление уже установленных — `install-wg-UPDATE-only.txt`.
 
 ## SSTP (Keenetic)
 
